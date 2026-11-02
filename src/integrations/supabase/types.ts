@@ -14,7 +14,57 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      price_alerts: {
+        Row: {
+          active: boolean
+          created_at: string
+          destination: string
+          id: string
+          origin: string
+          target_price: number
+          user_id: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          destination: string
+          id?: string
+          origin?: string
+          target_price: number
+          user_id?: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          destination?: string
+          id?: string
+          origin?: string
+          target_price?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          display_name: string | null
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string | null
+          id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
