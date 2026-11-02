@@ -91,7 +91,7 @@ function AppPage() {
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (!(Number(price) > 0)) return toast.error("請輸入有效價格 Enter a valid price");
+    if (!(Number(price) > 0)) { toast.error("請輸入有效價格 Enter a valid price"); return; }
     add.mutate();
   }
 
