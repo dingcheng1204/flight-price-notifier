@@ -1,5 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { Plane, BellRing, CircleOff } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -22,19 +24,24 @@ const features = [
 ];
 
 function Index() {
+  const [signedIn, setSignedIn] = useState(false);
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSignedIn(!!data.session));
+    const { data } = supabase.auth.onAuthStateChange((_e, s) => setSignedIn(!!s));
+    return () => data.subscription.unsubscribe();
+  }, []);
   return (
     <div className="min-h-screen bg-hero">
       <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
         <span className="flex items-center gap-2 font-semibold">
           <Plane className="h-5 w-5 text-primary-glow" /> Flight Price Notifier
         </span>
-        <button
-          type="button"
-          title="Sign-in coming soon"
+        <Link
+          to={signedIn ? "/app" : "/auth"}
           className="rounded-lg bg-gradient-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-glow transition-transform hover:scale-105"
         >
-          Sign in / 登入
-        </button>
+          {signedIn ? "我的通知 My alerts" : "Sign in / 登入"}
+        </Link>
       </header>
 
       <main>
