@@ -1,23 +1,16 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "react-router";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { usePageMeta } from "@/lib/page-meta";
 
-export const Route = createFileRoute("/reset-password")({
-  head: () => ({
-    meta: [
-      { title: "重設密碼 Reset password — Flight Price Notifier" },
-      { name: "description", content: "Choose a new password for your Flight Price Notifier account." },
-      { property: "og:title", content: "重設密碼 Reset password — Flight Price Notifier" },
-      { property: "og:description", content: "Choose a new password for your Flight Price Notifier account." },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
-    ],
-  }),
-  component: ResetPassword,
-});
 
-function ResetPassword() {
+export default function ResetPassword() {
+  usePageMeta({
+    title: "重設密碼 Reset password — Flight Price Notifier",
+    description: "Choose a new password for your Flight Price Notifier account.",
+    twitterCard: "summary",
+  });
   const navigate = useNavigate();
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -29,7 +22,7 @@ function ResetPassword() {
     setBusy(false);
     if (error) { toast.error(error.message); return; }
     toast.success("密碼已更新 Password updated");
-    navigate({ to: "/app", replace: true });
+    navigate("/app", { replace: true });
   }
 
   return (

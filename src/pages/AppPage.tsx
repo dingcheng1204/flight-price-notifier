@@ -1,23 +1,12 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Plane, Trash2, LogOut } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuthUser } from "@/components/RequireAuth";
+import { usePageMeta } from "@/lib/page-meta";
 
-export const Route = createFileRoute("/_authenticated/app")({
-  head: () => ({
-    meta: [
-      { title: "我的通知 My alerts — Flight Price Notifier" },
-      { name: "description", content: "Manage your flight routes and target prices." },
-      { property: "og:title", content: "我的通知 My alerts — Flight Price Notifier" },
-      { property: "og:description", content: "Manage your flight routes and target prices." },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
-    ],
-  }),
-  component: AppPage,
-});
 
 const DESTINATIONS = [
   { code: "NRT", label: "東京成田 Tokyo Narita" },
@@ -27,8 +16,13 @@ const DESTINATIONS = [
 ];
 const labelFor = (c: string) => DESTINATIONS.find((d) => d.code === c)?.label ?? c;
 
-function AppPage() {
-  const { user } = Route.useRouteContext();
+export default function AppPage() {
+  usePageMeta({
+    title: "我的通知 My alerts — Flight Price Notifier",
+    description: "Manage your flight routes and target prices.",
+    twitterCard: "summary",
+  });
+  const user = useAuthUser();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [destination, setDestination] = useState("NRT");
@@ -86,7 +80,7 @@ function AppPage() {
     await qc.cancelQueries();
     qc.clear();
     await supabase.auth.signOut();
-    navigate({ to: "/auth", replace: true });
+    navigate("/sign-in", { replace: true });
   }
 
   function submit(e: FormEvent) {

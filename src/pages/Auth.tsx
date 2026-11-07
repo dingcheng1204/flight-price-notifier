@@ -1,31 +1,24 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "react-router";
 import { useEffect, useState, type FormEvent } from "react";
 import { Plane } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { usePageMeta } from "@/lib/page-meta";
 
-export const Route = createFileRoute("/auth")({
-  head: () => ({
-    meta: [
-      { title: "登入 Sign in — Flight Price Notifier" },
-      { name: "description", content: "Sign in or create an account to manage your fare-drop alerts." },
-      { property: "og:title", content: "登入 Sign in — Flight Price Notifier" },
-      { property: "og:description", content: "Sign in or create an account to manage your fare-drop alerts." },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
-    ],
-  }),
-  component: AuthPage,
-});
 
 type Mode = "signin" | "signup" | "forgot";
 
 const inputCls =
   "w-full rounded-lg border bg-muted px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-ring/40";
 
-function AuthPage() {
+export default function AuthPage({ initialMode }: { initialMode: "signin" | "signup" }) {
+  usePageMeta({
+    title: "登入 Sign in — Flight Price Notifier",
+    description: "Sign in or create an account to manage your fare-drop alerts.",
+    twitterCard: "summary",
+  });
   const navigate = useNavigate();
-  const [mode, setMode] = useState<Mode>("signin");
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -34,7 +27,7 @@ function AuthPage() {
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      if (data.user) navigate({ to: "/app", replace: true });
+      if (data.user) navigate("/app", { replace: true });
     });
   }, [navigate]);
 
@@ -46,7 +39,7 @@ function AuthPage() {
       if (mode === "signin") {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        navigate({ to: "/app", replace: true });
+        navigate("/app", { replace: true });
       } else if (mode === "signup") {
         const { data, error } = await supabase.auth.signUp({
           email,
@@ -54,7 +47,7 @@ function AuthPage() {
           options: { emailRedirectTo: window.location.origin + "/app", data: { display_name: name } },
         });
         if (error) throw error;
-        if (data.session) navigate({ to: "/app", replace: true });
+        if (data.session) navigate("/app", { replace: true });
         else setNotice("已寄出確認信，請到信箱點連結完成註冊。Check your email to confirm your account.");
       } else {
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
@@ -68,6 +61,13 @@ function AuthPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  // Sign in / sign up each have their own URL; "forgot" stays on the current page.
+  function switchTo(next: "signin" | "signup") {
+    setMode(next);
+    setNotice(null);
+    navigate(next === "signin" ? "/sign-in" : "/sign-up");
   }
 
   const title = mode === "signin" ? "登入 Sign in" : mode === "signup" ? "建立帳號 Create account" : "忘記密碼 Reset password";
@@ -96,8 +96,8 @@ function AuthPage() {
           </form>
         )}
         <div className="mt-5 flex flex-col gap-1 text-center text-sm text-muted-foreground">
-          {mode !== "signin" && <button onClick={() => { setMode("signin"); setNotice(null); }} className="hover:text-foreground">已有帳號？登入 Sign in</button>}
-          {mode !== "signup" && <button onClick={() => { setMode("signup"); setNotice(null); }} className="hover:text-foreground">還沒有帳號？註冊 Create account</button>}
+          {mode !== "signin" && <button onClick={() => switchTo("signin")} className="hover:text-foreground">已有帳號？登入 Sign in</button>}
+          {mode !== "signup" && <button onClick={() => switchTo("signup")} className="hover:text-foreground">還沒有帳號？註冊 Create account</button>}
           {mode === "signin" && <button onClick={() => setMode("forgot")} className="hover:text-foreground">忘記密碼？Forgot password</button>}
         </div>
       </div>

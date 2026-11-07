@@ -1,21 +1,9 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { Link } from "react-router";
 import { useEffect, useState } from "react";
 import { Plane, BellRing, CircleOff } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { usePageMeta } from "@/lib/page-meta";
 
-export const Route = createFileRoute("/")({
-  head: () => ({
-    meta: [
-      { title: "Flight Price Notifier — 機票降價通知" },
-      { name: "description", content: "Set a route and a target price — we email you when the fare drops." },
-      { property: "og:title", content: "Flight Price Notifier — 機票降價通知" },
-      { property: "og:description", content: "Set a route and a target price — we email you when the fare drops." },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-    ],
-  }),
-  component: Index,
-});
 
 const features = [
   { icon: Plane, title: "盯緊熱門航線 (Always-on route watching)", body: "持續監控台北出發的熱門航線（東京、首爾），自動抓最低票價。" },
@@ -23,7 +11,12 @@ const features = [
   { icon: CircleOff, title: "隨時取消 (Cancel anytime)", body: "月訂閱制，不想用隨時停，沒有綁約。" },
 ];
 
-function Index() {
+export default function Index() {
+  usePageMeta({
+    title: "Flight Price Notifier — 機票降價通知",
+    description: "Set a route and a target price — we email you when the fare drops.",
+    twitterCard: "summary_large_image",
+  });
   const [signedIn, setSignedIn] = useState(false);
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSignedIn(!!data.session));
@@ -37,7 +30,7 @@ function Index() {
           <Plane className="h-5 w-5 text-primary-glow" /> Flight Price Notifier
         </span>
         <Link
-          to={signedIn ? "/app" : "/auth"}
+          to={signedIn ? "/app" : "/sign-in"}
           className="rounded-lg bg-gradient-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-glow transition-transform hover:scale-105"
         >
           {signedIn ? "我的通知 My alerts" : "Sign in / 登入"}
