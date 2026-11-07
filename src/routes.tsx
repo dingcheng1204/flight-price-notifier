@@ -5,6 +5,8 @@ import { RequireAuth } from "@/components/RequireAuth";
 import Index from "@/pages/Index";
 import AuthPage from "@/pages/Auth";
 import ResetPassword from "@/pages/ResetPassword";
+import AuthConfirmed from "@/pages/AuthConfirmed";
+import { CONFIRM_PATH } from "@/lib/auth-redirect";
 import AppPage from "@/pages/AppPage";
 
 export const routes: RouteObject[] = [
@@ -19,6 +21,8 @@ export const routes: RouteObject[] = [
       // Old URL from the TanStack version — keep links/bookmarks working.
       { path: "/auth", element: <Navigate to="/sign-in" replace /> },
       { path: "/reset-password", element: <ResetPassword /> },
+      // Landing page for the sign-up confirmation email.
+      { path: CONFIRM_PATH, element: <AuthConfirmed /> },
       {
         element: <RequireAuth />,
         children: [{ path: "/app", element: <AppPage /> }],

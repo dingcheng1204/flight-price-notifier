@@ -3,6 +3,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Plane } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { confirmRedirectUrl } from "@/lib/auth-redirect";
 import { usePageMeta } from "@/lib/page-meta";
 
 
@@ -44,7 +45,7 @@ export default function AuthPage({ initialMode }: { initialMode: "signin" | "sig
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: window.location.origin + "/app", data: { display_name: name } },
+          options: { emailRedirectTo: confirmRedirectUrl(), data: { display_name: name } },
         });
         if (error) throw error;
         if (data.session) navigate("/app", { replace: true });
