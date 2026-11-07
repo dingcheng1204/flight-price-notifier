@@ -27,3 +27,5 @@ dist-ssr
 
 # Lambda build output
 aws/build/
+__pycache__/
+.pytest_cache/

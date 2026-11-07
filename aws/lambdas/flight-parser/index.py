@@ -51,7 +51,13 @@ def fetch_cheapest(origin, destination, month, tok, currency):
         return None
     if not body.get("success") or not body.get("data"):
         return None
-    offers = body["data"].get(destination, {})
+    # The response is keyed by the destination *city* (HND/NRT -> "TYO", TSA -> "TPE"),
+    # not the airport we asked for, so collect offers under every key.
+    offers = {}
+    for k, v in body["data"].items():
+        for idx, o in (v or {}).items():
+            if isinstance(o, dict) and "price" in o:
+                offers[f"{k}:{idx}"] = o
     if not offers:
         return None
     best = min(offers.values(), key=lambda o: o["price"])
