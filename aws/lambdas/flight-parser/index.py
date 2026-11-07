@@ -10,7 +10,9 @@ Window per subscriber:
   - undated: departure any day next month, any return (the original M1 behaviour)
 
 Fares come from Travelpayouts /aviasales/v3/prices_for_dates, queried per
-(departure month, return month) pair. It returns cached prices that people searched recently,
+(departure month, return month) pair. For a dated window with no cached round trip at all,
+it falls back to two one-way tickets (outbound in the departure range + inbound in the return
+range, inbound on a later day) and alerts on their sum ("kind": "one_way_pair"). It returns cached prices that people searched recently,
 so not every date has a price.
 """
 import json, os, urllib.request, urllib.parse, urllib.error
@@ -90,11 +92,12 @@ def month_pairs(win):
     return [(dm, rm) for dm in dms for rm in rms if rm >= dm]
 
 
-def fetch(origin, destination, dep_month, ret_month, tok, currency):
-    """List of offers (dicts) for one month pair. [] on any failure."""
+def fetch(origin, destination, dep_month, ret_month, tok, currency, one_way=False):
+    """List of offers (dicts) for one month pair (or one month, one-way). [] on any failure."""
     q = {"origin": origin, "destination": destination, "departure_at": dep_month,
-         "one_way": "false", "sorting": "price", "limit": 1000, "currency": currency, "token": tok}
-    if ret_month:
+         "one_way": "true" if one_way else "false", "sorting": "price", "limit": 1000,
+         "currency": currency, "token": tok}
+    if ret_month and not one_way:
         q["return_at"] = ret_month
     req = urllib.request.Request(f"{API}?{urllib.parse.urlencode(q)}",
                                  headers={"User-Agent": UA, "Accept": "application/json"})
@@ -138,6 +141,20 @@ def in_window(offer, win):
     return rf <= ret <= rt and ret > dep
 
 
+def _day(offer):
+    return date.fromisoformat(offer["departure_at"][:10])
+
+
+def best_one_way_pair(outs, ins, win):
+    """Cheapest (outbound, inbound) pair: outbound departs in the departure range, inbound
+    departs in the return range and on a later day than the outbound. None if no pair."""
+    df, dt, rf, rt = win
+    outs = [o for o in outs if df <= _day(o) <= dt]
+    ins = [i for i in ins if rf <= _day(i) <= rt]
+    pairs = [(o, i) for o in outs for i in ins if _day(i) > _day(o)]  # a few dozen each at most
+    return min(pairs, key=lambda p: p[0]["price"] + p[1]["price"]) if pairs else None
+
+
 def subscribers(route):
     items, kw = [], {"FilterExpression": Attr("route").eq(route)}
     while True:
@@ -177,11 +194,47 @@ def handler(event, context):
     tok = token()
     twd = {p: fetch(origin, destination, p[0], p[1], tok, "twd") for p in pairs}
     usd = {}
+    ow_out, ow_in = {}, {}  # one-way caches by month: origin->destination, destination->origin
+
+    def one_ways(cache, frm, to, months):
+        res = []
+        for m in months:
+            if m not in cache:
+                cache[m] = fetch(frm, to, m, None, tok, "twd", one_way=True)
+            res += cache[m]
+        return res
 
     matched = 0
     for it, win in subs:
         cands = [o for p in month_pairs(win) for o in twd.get(p, []) if in_window(o, win)]
         label = it["email"] + (f" [{win[0]}..{win[1]} / {win[2]}..{win[3]}]" if win[2] else " [next month]")
+        if not cands and win[2] is not None:
+            # no cached round trip in the window: try two one-way tickets
+            outs = one_ways(ow_out, origin, destination, months_between(win[0], win[1]))
+            ins = one_ways(ow_in, destination, origin, months_between(win[2], win[3]))
+            pair = best_one_way_pair(outs, ins, win)
+            if not pair:
+                print(f"{route} {label}: no round trip or one-way pair in window")
+                continue
+            o, i = pair
+            total = o["price"] + i["price"]
+            tp = Decimal(str(it.get("target_price", 0)))
+            print(f"{route} {label}: no round trip; one-way pair {o['price']}+{i['price']}={total} TWD "
+                  f"({o.get('airline')} {o['departure_at'][:10]} / {i.get('airline')} {i['departure_at'][:10]}), target {tp}")
+            if tp < Decimal(str(total)):
+                continue
+            leg = lambda x: {"price": x["price"], "currency": "TWD", "airline": x.get("airline"),
+                             "depart_date": x.get("departure_at")}
+            body = {"email": it["email"], "route": route, "target_price": int(tp), "kind": "one_way_pair",
+                    "cheapest": {"price": total, "currency": "TWD",
+                                 "airline": f"{o.get('airline')} + {i.get('airline')}",
+                                 "depart_date": o.get("departure_at"), "return_date": i.get("departure_at")},
+                    "legs": [leg(o), leg(i)],
+                    "window": {"depart_from": win[0].isoformat(), "depart_to": win[1].isoformat(),
+                               "return_from": win[2].isoformat(), "return_to": win[3].isoformat()}}
+            _sqs.send_message(QueueUrl=qurl(), MessageBody=json.dumps(body))
+            matched += 1
+            continue
         if not cands:
             print(f"{route} {label}: no fare in window")
             continue

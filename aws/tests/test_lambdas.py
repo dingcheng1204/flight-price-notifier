@@ -313,6 +313,131 @@ def test_parser_legacy_city_rows_match_city_codes(aws, monkeypatch):
     assert parser.handler({"origin": "TPE", "destination": "TYO"}, None)["matched"] == 1
 
 
+def fake_v3_full(table, calls=None):
+    """table: {(origin, destination, one_way, dep_month, ret_month_or_None): [items]} (TWD only)."""
+    from urllib.parse import parse_qs, urlparse
+
+    def _open(req, timeout=10):
+        q = {k: v[0] for k, v in parse_qs(urlparse(req.full_url).query).items()}
+        key = (q["origin"], q["destination"], q["one_way"] == "true", q["departure_at"], q.get("return_at"))
+        if calls is not None:
+            calls.append(key)
+        items = table.get(key) if q["currency"] == "twd" else None
+        return FakeResp(json.dumps({"success": True, "data": items or []}).encode())
+    return _open
+
+
+def ow(day, price, o="TSA", d="HND", airline="TW"):
+    city = {"TSA": "TPE", "TPE": "TPE", "HND": "TYO", "NRT": "TYO", "HKG": "HKG", "ICN": "SEL"}
+    return {"origin": city[o], "origin_airport": o, "destination": city[d], "destination_airport": d,
+            "price": price, "airline": airline, "departure_at": f"{day}T08:00:00+08:00", "return_at": None}
+
+
+LONG_TRIP = ("2026-11-15", "2026-11-22", "2026-12-26", "2027-01-03")
+
+
+def test_one_way_pair_when_no_round_trip_in_window(aws, monkeypatch):
+    parser = load("flight-parser")
+    monkeypatch.setattr(parser, "today_taipei", lambda: TODAY)
+    sub(aws.Table("subscriptions"), "me@x.com", "TSA", "HND", 25000, LONG_TRIP)
+    calls = []
+    monkeypatch.setattr(parser.urllib.request, "urlopen", fake_v3_full({
+        # round trips exist, but none return Dec 26 - Jan 3
+        ("TSA", "HND", False, "2026-11", "2026-12"): [v3("2026-11-27", "2026-12-01", 16204, airline="BR")],
+        ("TSA", "HND", True, "2026-11", None): [ow("2026-11-18", 8729), ow("2026-11-12", 7000),   # Nov 12 outside
+                                               ow("2026-11-15", 13820, airline="AE")],
+        ("HND", "TSA", True, "2026-12", None): [ow("2026-12-31", 12407, "HND", "TSA", "BR"),
+                                               ow("2026-12-20", 8123, "HND", "TSA", "BR")],  # Dec 20 outside
+        ("HND", "TSA", True, "2027-01", None): [ow("2027-01-02", 13000, "HND", "TSA", "CI")],
+    }, calls))
+    assert parser.handler({"origin": "TSA", "destination": "HND"}, None)["matched"] == 1
+    m = queued()[0]
+    assert m["kind"] == "one_way_pair"
+    assert m["cheapest"]["price"] == 8729 + 12407 and m["cheapest"]["airline"] == "TW + BR"
+    assert [l["price"] for l in m["legs"]] == [8729, 12407]
+    assert m["legs"][0]["depart_date"].startswith("2026-11-18") and m["legs"][1]["depart_date"].startswith("2026-12-31")
+    assert m["window"]["return_to"] == "2027-01-03"
+    # one-way queries: outbound Nov; inbound Dec + Jan (reversed direction)
+    assert ("TSA", "HND", True, "2026-11", None) in calls
+    assert ("HND", "TSA", True, "2026-12", None) in calls and ("HND", "TSA", True, "2027-01", None) in calls
+
+
+def test_one_way_pair_above_target_is_not_sent(aws, monkeypatch):
+    parser = load("flight-parser")
+    monkeypatch.setattr(parser, "today_taipei", lambda: TODAY)
+    sub(aws.Table("subscriptions"), "me@x.com", "TSA", "HND", 20000, LONG_TRIP)
+    monkeypatch.setattr(parser.urllib.request, "urlopen", fake_v3_full({
+        ("TSA", "HND", True, "2026-11", None): [ow("2026-11-18", 8729)],
+        ("HND", "TSA", True, "2026-12", None): [ow("2026-12-31", 12407, "HND", "TSA", "BR")]}))
+    assert parser.handler({"origin": "TSA", "destination": "HND"}, None)["matched"] == 0
+    assert queued() == []
+
+
+def test_one_way_pair_requires_inbound_after_outbound(aws, monkeypatch):
+    parser = load("flight-parser")
+    monkeypatch.setattr(parser, "today_taipei", lambda: TODAY)
+    # overlapping ranges: depart Dec 10-20, return Dec 12-25
+    sub(aws.Table("subscriptions"), "me@x.com", "TPE", "NRT", 30000, ("2026-12-10", "2026-12-20", "2026-12-12", "2026-12-25"))
+    monkeypatch.setattr(parser.urllib.request, "urlopen", fake_v3_full({
+        ("TPE", "NRT", True, "2026-12", None): [ow("2026-12-18", 4000, "TPE", "NRT"), ow("2026-12-11", 6000, "TPE", "NRT")],
+        ("NRT", "TPE", True, "2026-12", None): [ow("2026-12-13", 3000, "NRT", "TPE"),   # before the Dec 18 outbound
+                                               ow("2026-12-22", 5000, "NRT", "TPE")]}))
+    assert parser.handler({"origin": "TPE", "destination": "NRT"}, None)["matched"] == 1
+    m = queued()[0]
+    # candidates: 18->22 = 9000, 11->13 = 9000, 11->22 = 11000; 18->13 is invalid
+    assert m["cheapest"]["price"] == 9000
+    d0, d1 = m["legs"][0]["depart_date"][:10], m["legs"][1]["depart_date"][:10]
+    assert d1 > d0
+
+
+def test_round_trip_in_window_wins_over_one_way_fallback(aws, monkeypatch):
+    parser = load("flight-parser")
+    monkeypatch.setattr(parser, "today_taipei", lambda: TODAY)
+    sub(aws.Table("subscriptions"), "me@x.com", "TPE", "NRT", 10000, ("2026-12-10", "2026-12-20", "2026-12-20", "2026-12-31"))
+    calls = []
+    monkeypatch.setattr(parser.urllib.request, "urlopen", fake_v3_full({
+        ("TPE", "NRT", False, "2026-12", "2026-12"): [v3("2026-12-17", "2026-12-22", 8790, o="TPE", d="NRT")],
+        ("TPE", "NRT", True, "2026-12", None): [ow("2026-12-15", 1000, "TPE", "NRT")],
+        ("NRT", "TPE", True, "2026-12", None): [ow("2026-12-25", 1000, "NRT", "TPE")]}, calls))
+    assert parser.handler({"origin": "TPE", "destination": "NRT"}, None)["matched"] == 1
+    m = queued()[0]
+    assert "kind" not in m and m["cheapest"]["price"] == 8790
+    assert not any(c[2] for c in calls)  # no one-way queries were needed
+
+
+def test_undated_subscription_never_uses_one_way_fallback(aws, monkeypatch):
+    parser = load("flight-parser")
+    monkeypatch.setattr(parser, "today_taipei", lambda: TODAY)
+    sub(aws.Table("subscriptions"), "me@x.com", "HKG", "TSA", 99999)
+    calls = []
+    monkeypatch.setattr(parser.urllib.request, "urlopen", fake_v3_full({}, calls))
+    assert parser.handler({"origin": "HKG", "destination": "TSA"}, None)["matched"] == 0
+    assert not any(c[2] for c in calls)
+
+
+def test_one_way_pair_email(aws, monkeypatch):
+    n = load("flight-fare-notification")
+    sent = []
+    monkeypatch.setattr(n, "send_email", lambda to, subj, h, t: (sent.append((subj, h, t)), (200, '{"id":"x"}'))[1])
+    msg = {"email": "me@x.com", "route": "TSA-HND", "target_price": 25000, "kind": "one_way_pair",
+           "cheapest": {"price": 21136, "currency": "TWD", "airline": "TW + BR",
+                        "depart_date": "2026-11-18T08:00:00+08:00", "return_date": "2026-12-31T08:00:00+09:00"},
+           "legs": [{"price": 8729, "currency": "TWD", "airline": "TW", "depart_date": "2026-11-18T08:00:00+08:00"},
+                    {"price": 12407, "currency": "TWD", "airline": "BR", "depart_date": "2026-12-31T08:00:00+09:00"}],
+           "window": dict(zip(["depart_from", "depart_to", "return_from", "return_to"], LONG_TRIP))}
+    n.process(msg)
+    subj, html_body, text = sent[0]
+    assert subj == "✈️ 台北松山 → 東京羽田 降價通知！NT$21,136 已達標（兩張單程合計）"
+    assert "兩張單程票合計，可能是不同航空公司，需要分開訂購" in text and "兩張單程票合計" in html_body
+    assert "去程（台北松山 → 東京羽田）：2026-11-18　TW　NT$8,729" in text
+    assert "回程（東京羽田 → 台北松山）：2026-12-31　BR　NT$12,407" in text
+    assert "https://www.aviasales.com/search/TSA1811HND1" in text and "https://www.aviasales.com/search/HND3112TSA1" in text
+    assert "訂購去程" in html_body and "訂購回程" in html_body
+    # recorded in history at the combined price -> dedup works on the sum
+    h = aws.Table("notification_history").scan()["Items"]
+    assert [int(i["price"]) for i in h if i["sent_at"] != "0000-lock"] == [21136]
+
+
 # ---------------- wrapper ----------------
 def test_wrapper_dispatches_distinct_subscribed_routes(aws, monkeypatch):
     wrapper = load("flight-parser-wrapper")

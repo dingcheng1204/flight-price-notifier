@@ -101,6 +101,61 @@ def render_html(fare, target_price, marker=None, usd_price=None, window=None):
 </div></body></html>"""
 
 
+# ---------- two one-way tickets ----------
+PAIR_NOTE = "這是兩張單程票合計，可能是不同航空公司，需要分開訂購。"
+
+
+def one_way_url(origin, destination, iso, marker=None):
+    url = f"https://www.aviasales.com/search/{origin}{_ddmm(iso)}{destination}1"
+    return url + (f"?marker={urllib.parse.quote(str(marker))}" if marker else "")
+
+
+def subject_pair(fare):
+    return f"✈️ {route_label(fare)} 降價通知！NT${fare['price']:,} 已達標（兩張單程合計）"
+
+
+def _legs(fare, legs, marker):
+    o, d = fare["origin"], fare["destination"]
+    out, back = legs
+    return [("去程", CITY.get(o, o), CITY.get(d, d), out, one_way_url(o, d, out.get("depart_date"), marker)),
+            ("回程", CITY.get(d, d), CITY.get(o, o), back, one_way_url(d, o, back.get("depart_date"), marker))]
+
+
+def render_pair_text(fare, legs, target_price, marker=None, window=None):
+    lines = [f"{route_label(fare)} 機票降價了！",
+             f"兩張單程票合計：NT${fare['price']:,}",
+             f"你的目標價：NT${int(target_price):,}", ""]
+    for name, a, b, leg, url in _legs(fare, legs, marker):
+        lines += [f"{name}（{a} → {b}）：{_date(leg.get('depart_date'))}　{leg.get('airline') or '—'}　NT${leg['price']:,}",
+                  f"  訂購{name}：{url}"]
+    lines += ["", PAIR_NOTE]
+    if window:
+        lines.append(window_text(window))
+    lines += ["", "票價隨時變動，以訂購頁面為準。— Flight Price Notifier"]
+    return "\n".join(lines)
+
+
+def render_pair_html(fare, legs, target_price, marker=None, window=None):
+    e = html.escape
+    rows = ""
+    for name, a, b, leg, url in _legs(fare, legs, marker):
+        rows += (f'<p style="margin:12px 0 0;font-size:14px;"><b>{name}</b>（{e(a)} → {e(b)}）'
+                 f'{e(_date(leg.get("depart_date")))}　{e(str(leg.get("airline") or "—"))}　NT${leg["price"]:,}</p>'
+                 f'<p style="margin:6px 0 0;"><a href="{e(url)}" style="display:inline-block;background:#111;color:#fff;'
+                 f'text-decoration:none;padding:8px 14px;border-radius:8px;font-size:14px;">訂購{name}</a></p>')
+    win = (f'<p style="margin:12px 0 0;font-size:13px;color:#555;">{e(window_text(window))}</p>'
+           if window else "")
+    return f"""<!doctype html><html><body style="margin:0;padding:24px;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#111;background:#fff;">
+<div style="max-width:480px;margin:0 auto;">
+<p style="margin:0 0 8px;font-size:15px;">{e(route_label(fare))} 機票降價了！</p>
+<p style="margin:0;font-size:32px;font-weight:700;">NT${fare['price']:,}</p>
+<p style="margin:4px 0 0;color:#555;font-size:14px;">兩張單程票合計</p>
+<p style="margin:16px 0 0;font-size:14px;">你的目標價：NT${int(target_price):,}</p>{rows}
+<p style="margin:16px 0 0;font-size:13px;color:#b45309;">{e(PAIR_NOTE)}</p>{win}
+<p style="margin:24px 0 0;font-size:12px;color:#777;">票價隨時變動，以訂購頁面為準。— Flight Price Notifier</p>
+</div></body></html>"""
+
+
 # ---------- dedup ----------
 # History rows use ISO-8601 sent_at ("2026-..."); the per-pk lock row uses LOCK_SK, which
 # sorts before any timestamp and is excluded from history reads by the "> 1" range bound.
@@ -193,9 +248,15 @@ def _send(msg, email, route, fare, tw, pk, why):
         marker = json.loads(_sm.get_secret_value(SecretId="flight/travelpayouts")["SecretString"]).get("marker")
     except Exception:
         pass
-    status, body = send_email(email, subject(fare),
-                              render_html(fare, msg["target_price"], marker, usd, msg.get("window")),
-                              render_text(fare, msg["target_price"], marker, usd, msg.get("window")))
+    if msg.get("kind") == "one_way_pair" and len(msg.get("legs") or []) == 2:
+        legs = msg["legs"]
+        status, body = send_email(email, subject_pair(fare),
+                                  render_pair_html(fare, legs, msg["target_price"], marker, msg.get("window")),
+                                  render_pair_text(fare, legs, msg["target_price"], marker, msg.get("window")))
+    else:
+        status, body = send_email(email, subject(fare),
+                                  render_html(fare, msg["target_price"], marker, usd, msg.get("window")),
+                                  render_text(fare, msg["target_price"], marker, usd, msg.get("window")))
     if 200 <= status < 300:
         _hist.put_item(Item={"pk": pk, "sent_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                              "email": email, "route": route, "price": Decimal(str(tw["price"])),
