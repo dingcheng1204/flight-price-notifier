@@ -37,3 +37,6 @@ CREATE POLICY "Own alerts select" ON public.price_alerts FOR SELECT TO authentic
 CREATE POLICY "Own alerts insert" ON public.price_alerts FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Own alerts update" ON public.price_alerts FOR UPDATE TO authenticated USING (auth.uid() = user_id);
 CREATE POLICY "Own alerts delete" ON public.price_alerts FOR DELETE TO authenticated USING (auth.uid() = user_id);
+
+-- Trigger-only function: not callable through the API.
+REVOKE EXECUTE ON FUNCTION public.handle_new_user() FROM PUBLIC, anon, authenticated;
