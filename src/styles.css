@@ -23,30 +23,31 @@
   --color-ring: var(--ring);
 }
 
-/* Painterly "pink court" theme — blush pink, sage & forest green, chalk white, rose accents */
+/* Retro seaside theme — mint clapboard, pink trim, deep teal ocean, ivory lace, film grain */
 :root {
   --radius: 0.75rem;
-  --background: #f2b2be;          /* blush court pink */
-  --foreground: #2c4636;          /* deep green ink */
-  --card: #fbe3e6;                /* chalky light pink */
-  --card-foreground: #2c4636;
-  --primary: #3f6b4e;             /* forest green */
-  --primary-glow: #5f8c68;        /* sage */
-  --primary-foreground: #fff6f0;  /* chalk white */
-  --muted: #f9d7dd;
-  --muted-foreground: #4f6355;
-  --accent: #f7cdd5;
-  --border: rgb(255 248 242 / 80%);   /* white chalk lines */
-  --input: rgb(255 248 242 / 90%);
-  --ring: #3f6b4e;
-  --brush-court: url("./assets/theme/brush-court.svg");
-  --brush-fine: url("./assets/theme/brush-fine.svg");
+  --background: #cfe6dc;          /* mint clapboard */
+  --foreground: #173a4e;          /* deep ocean ink */
+  --card: #fbf6e9;                /* ivory apron */
+  --card-foreground: #173a4e;
+  --primary: #2b5f78;             /* ocean teal-blue */
+  --primary-glow: #4f8ea3;        /* sunlit water */
+  --primary-foreground: #fbf6e9;
+  --muted: #eef5f0;
+  --muted-foreground: #4a6570;
+  --accent: #f3d3d4;              /* dusty rose */
+  --border: #e9b9bd;              /* pink window trim */
+  --input: #e9b9bd;
+  --ring: #2b5f78;
+  --grain: url("./assets/theme/grain.svg");
+  --ripple: url("./assets/theme/ripple.svg");
+  --sky: linear-gradient(180deg, #dcecf2 0%, #d4eae2 38%, #cfe6dc 100%);
   --gradient-primary: linear-gradient(135deg, var(--primary), var(--primary-glow));
   --gradient-hero:
-    url("./assets/theme/garden-left.svg") left bottom / var(--garden-size) no-repeat,
-    url("./assets/theme/garden-right.svg") right bottom / var(--garden-size) no-repeat;
-  --garden-size: clamp(140px, 22vw, 300px);
-  --shadow-glow: 0 10px 28px -12px rgb(63 107 78 / 60%);
+    url("./assets/theme/wave-left.svg") left bottom / var(--wave-size) auto no-repeat,
+    url("./assets/theme/wave-right.svg") right bottom / var(--wave-size) auto no-repeat;
+  --wave-size: clamp(170px, 30vw, 400px);
+  --shadow-glow: 0 10px 26px -12px rgb(27 66 88 / 65%);
 }
 
 @theme inline {
@@ -57,27 +58,25 @@
   * { border-color: var(--color-border); }
   body {
     background-color: var(--color-background);
-    background-image: var(--brush-court);
-    background-size: cover;
+    background-image: var(--grain), var(--sky);
     background-attachment: fixed;
     color: var(--color-foreground);
     font-family: var(--font-sans);
   }
-  /* Full-page wrappers that paint their own background keep the brush texture too. */
+  /* Full-page wrappers that paint their own background keep the sky + grain. */
   .bg-background {
-    background-image: var(--brush-court);
-    background-size: cover;
+    background-image: var(--grain), var(--sky);
     background-attachment: fixed;
   }
-  /* Cards and panels: chalky paint strokes over the card colour. */
-  .bg-card { background-image: var(--brush-fine); }
+  /* Cards and panels: ivory with film grain. */
+  .bg-card { background-image: var(--grain); }
 }
 
 @utility bg-hero { background: var(--gradient-hero); }
-@utility bg-gradient-primary { background-image: var(--brush-fine), var(--gradient-primary); }
+@utility bg-gradient-primary { background-image: var(--ripple), var(--gradient-primary); }
 @utility shadow-glow { box-shadow: var(--shadow-glow); }
 @utility text-gradient {
-  background-image: var(--brush-fine), var(--gradient-primary);
+  background-image: var(--ripple), var(--gradient-primary);
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 @utility fade-up {
