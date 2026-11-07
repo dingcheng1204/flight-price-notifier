@@ -163,6 +163,69 @@ def test_save_accepts_today_and_overlapping_ranges(aws, monkeypatch):
     assert call_d(save, "not-an-object")[0] == 400
 
 
+# ---------------- save: dedup reset ----------------
+def hist_rows(aws, pk):
+    items = aws.Table("notification_history").scan()["Items"]
+    return sorted(i["sent_at"] for i in items if i["pk"] == pk)
+
+
+def seed_hist(aws, pk, *stamps):
+    for st in stamps:
+        aws.Table("notification_history").put_item(Item={"pk": pk, "sent_at": st, "price": 8063})
+
+
+def test_changing_target_or_dates_resets_dedup(aws, monkeypatch):
+    save = load("flight-save-subscription")
+    monkeypatch.setattr(save, "today_taipei", lambda: TODAY)
+    pk = "a@b.com#TPE-NRT"
+    body = {"email": "a@b.com", "origin": "TPE", "destination": "NRT", "target_price": 15000}
+    code, r = call(save, body)  # new subscription
+    assert code == 200 and r["dedup_reset"] is True
+
+    seed_hist(aws, pk, "2026-11-07T08:13:17.473+00:00", "0000-lock")
+    # same settings again -> history kept (no duplicate alerts from re-submitting)
+    assert call(save, body)[1]["dedup_reset"] is False
+    assert hist_rows(aws, pk) == ["0000-lock", "2026-11-07T08:13:17.473+00:00"]
+    # target-only update from the list (no "dates" key) with the same target -> kept
+    assert call(save, {**body})[1]["history_cleared"] == 0
+
+    # switch to a date window -> cleared (the lock row is left alone)
+    code, r = call(save, {**body, "dates": D})
+    assert r["dedup_reset"] is True and r["history_cleared"] == 1
+    assert hist_rows(aws, pk) == ["0000-lock"]
+
+    # change only the target -> cleared again
+    seed_hist(aws, pk, "2026-11-07T09:00:00.000+00:00")
+    r = call(save, {**body, "target_price": 25000})[1]
+    assert r["dedup_reset"] is True and hist_rows(aws, pk) == ["0000-lock"]
+
+    # same target, window unchanged (no dates key) -> kept
+    seed_hist(aws, pk, "2026-11-07T09:30:00.000+00:00")
+    assert call(save, {**body, "target_price": 25000})[1]["dedup_reset"] is False
+    # change only the window -> cleared
+    r = call(save, {**body, "target_price": 25000, "dates": {**D, "return_to": "2026-12-30"}})[1]
+    assert r["dedup_reset"] is True and hist_rows(aws, pk) == ["0000-lock"]
+    # back to undated -> cleared
+    seed_hist(aws, pk, "2026-11-07T10:00:00.000+00:00")
+    assert call(save, {**body, "target_price": 25000, "dates": None})[1]["dedup_reset"] is True
+
+
+def test_reset_only_touches_that_route(aws, monkeypatch):
+    save = load("flight-save-subscription")
+    seed_hist(aws, "a@b.com#TSA-HND", "2026-11-07T08:00:00.000+00:00")
+    seed_hist(aws, "other@b.com#TPE-NRT", "2026-11-07T08:00:00.000+00:00")
+    call(save, {"email": "a@b.com", "origin": "TPE", "destination": "NRT", "target_price": 1})
+    assert hist_rows(aws, "a@b.com#TSA-HND") and hist_rows(aws, "other@b.com#TPE-NRT")
+
+
+def test_delete_clears_history(aws):
+    save = load("flight-save-subscription")
+    call(save, {"email": "a@b.com", "origin": "TSA", "destination": "HND", "target_price": 9000})
+    seed_hist(aws, "a@b.com#TSA-HND", "2026-11-07T08:00:00.000+00:00")
+    call(save, {"email": "a@b.com", "route": "TSA-HND"}, method="DELETE")
+    assert hist_rows(aws, "a@b.com#TSA-HND") == []
+
+
 # ---------------- parser ----------------
 class FakeResp(io.BytesIO):
     def __enter__(self):

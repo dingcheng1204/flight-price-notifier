@@ -12,6 +12,7 @@ import json, re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import boto3
+from boto3.dynamodb.conditions import Key
 
 TAIPEI = timezone(timedelta(hours=8))  # Taiwan has no DST
 MAX_RANGE_DAYS = 60    # each range spans at most 60 days (bounds API calls per run)
@@ -26,6 +27,31 @@ LEGACY_PLANS = {"tokyo": ("TPE", "TYO"), "seoul": ("TPE", "SEL")}
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 ROUTE_RE = re.compile(r"^[A-Z]{3}-[A-Z]{3}$")
 ddb = boto3.resource("dynamodb").Table("subscriptions")
+hist = boto3.resource("dynamodb").Table("notification_history")
+
+
+def reset_dedup(email, route):
+    """Delete the route's alert history so a changed subscription starts fresh.
+    History rows have ISO timestamps as sent_at; the in-flight lock row ("0000-lock") is left alone."""
+    pk = f"{email}#{route}"
+    kw = {"KeyConditionExpression": Key("pk").eq(pk) & Key("sent_at").gt("1"),
+          "ProjectionExpression": "pk, sent_at"}
+    n = 0
+    while True:
+        page = hist.query(**kw)
+        for it in page.get("Items", []):
+            hist.delete_item(Key={"pk": it["pk"], "sent_at": it["sent_at"]})
+            n += 1
+        if "LastEvaluatedKey" not in page:
+            return n
+        kw["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+
+
+def _settings(item):
+    """What an alert depends on: target and date window (None when undated)."""
+    if not item:
+        return None
+    return (Decimal(str(item.get("target_price"))), tuple(item.get(k) for k in DATE_KEYS))
 
 
 def resp(code, body):
@@ -87,6 +113,7 @@ def handler(event, context):
         if not ROUTE_RE.match(route):
             return resp(400, {"error": "route must look like TSA-HND"})
         ddb.delete_item(Key={"email": email, "route": route})
+        reset_dedup(email, route)
         return resp(200, {"ok": True, "deleted": route})
 
     plan = str(data.get("plan_name", "")).strip().lower()
@@ -125,10 +152,16 @@ def handler(event, context):
         values.update({f":{k}": v for k, v in dates.items()})
     elif "dates" in data:  # explicit null -> clear the window
         expr += " REMOVE " + ", ".join(DATE_KEYS)
-    ddb.update_item(Key={"email": email, "route": route}, UpdateExpression=expr,
-                    ExpressionAttributeValues=values)
+    old = ddb.get_item(Key={"email": email, "route": route}).get("Item")
+    new = ddb.update_item(Key={"email": email, "route": route}, UpdateExpression=expr,
+                          ExpressionAttributeValues=values, ReturnValues="ALL_NEW")["Attributes"]
+    # A changed target or date window is a new alert condition: forget earlier alerts so the
+    # 24h dedup floor doesn't hold back the first alert under the new settings.
+    reset = _settings(old) != _settings(new)
+    cleared = reset_dedup(email, route) if reset else 0
     out = {"ok": True, "email": email, "route": route, "origin": origin,
-           "destination": dest, "target_price": int(tp), "currency": "TWD"}
+           "destination": dest, "target_price": int(tp), "currency": "TWD",
+           "dedup_reset": reset, "history_cleared": cleared}
     if dates:
         out["dates"] = dates
     return resp(200, out)
