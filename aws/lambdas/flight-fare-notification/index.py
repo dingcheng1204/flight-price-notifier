@@ -62,28 +62,40 @@ def subject(fare):
     return f"✈️ {route_label(fare)} 降價通知！NT${fare['price']:,} 已達標"
 
 
-def render_text(fare, target_price, marker=None, usd_price=None):
+def window_text(window):
+    """'你的日期區間：去程 2026-12-01 ~ 2026-12-10，回程 2026-12-05 ~ 2026-12-20' or ''."""
+    if not window:
+        return ""
+    return (f"你的日期區間：去程 {window['depart_from']} ~ {window['depart_to']}，"
+            f"回程 {window['return_from']} ~ {window['return_to']}")
+
+
+def render_text(fare, target_price, marker=None, usd_price=None, window=None):
     lines = [f"{route_label(fare)} 機票降價了！",
              f"目前最低價：NT${fare['price']:,}" + (f"（約 US${usd_price:,}）" if usd_price else ""),
              f"你的目標價：NT${int(target_price):,}",
              f"航空公司：{fare.get('airline') or '—'}",
-             f"去程：{_date(fare.get('depart_date'))}　回程：{_date(fare.get('return_date'))}",
-             "", f"立即訂購：{booking_url(fare, marker)}",
+             f"去程：{_date(fare.get('depart_date'))}　回程：{_date(fare.get('return_date'))}"]
+    if window:
+        lines.append(window_text(window))
+    lines += ["", f"立即訂購：{booking_url(fare, marker)}",
              "", "票價隨時變動，以訂購頁面為準。— Flight Price Notifier"]
     return "\n".join(lines)
 
 
-def render_html(fare, target_price, marker=None, usd_price=None):
+def render_html(fare, target_price, marker=None, usd_price=None, window=None):
     e = html.escape
     usd = (f'<p style="margin:4px 0 0;color:#555;font-size:14px;">約 US${usd_price:,}</p>'
            if usd_price else "")
+    win = (f'<p style="margin:4px 0 0;font-size:13px;color:#555;">{e(window_text(window))}</p>'
+           if window else "")
     return f"""<!doctype html><html><body style="margin:0;padding:24px;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#111;background:#fff;">
 <div style="max-width:480px;margin:0 auto;">
 <p style="margin:0 0 8px;font-size:15px;">{e(route_label(fare))} 機票降價了！</p>
 <p style="margin:0;font-size:32px;font-weight:700;">NT${fare['price']:,}</p>{usd}
 <p style="margin:16px 0 0;font-size:14px;">你的目標價：NT${int(target_price):,}</p>
 <p style="margin:4px 0 0;font-size:14px;">航空公司：{e(str(fare.get('airline') or '—'))}</p>
-<p style="margin:4px 0 0;font-size:14px;">去程：{e(_date(fare.get('depart_date')))}　回程：{e(_date(fare.get('return_date')))}</p>
+<p style="margin:4px 0 0;font-size:14px;">去程：{e(_date(fare.get('depart_date')))}　回程：{e(_date(fare.get('return_date')))}</p>{win}
 <p style="margin:24px 0;"><a href="{e(booking_url(fare, marker))}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:15px;">立即訂購</a></p>
 <p style="margin:0;font-size:12px;color:#777;">票價隨時變動，以訂購頁面為準。— Flight Price Notifier</p>
 </div></body></html>"""
@@ -182,8 +194,8 @@ def _send(msg, email, route, fare, tw, pk, why):
     except Exception:
         pass
     status, body = send_email(email, subject(fare),
-                              render_html(fare, msg["target_price"], marker, usd),
-                              render_text(fare, msg["target_price"], marker, usd))
+                              render_html(fare, msg["target_price"], marker, usd, msg.get("window")),
+                              render_text(fare, msg["target_price"], marker, usd, msg.get("window")))
     if 200 <= status < 300:
         _hist.put_item(Item={"pk": pk, "sent_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                              "email": email, "route": route, "price": Decimal(str(tw["price"])),

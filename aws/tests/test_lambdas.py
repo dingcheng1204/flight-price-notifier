@@ -111,6 +111,58 @@ def test_delete(aws):
     assert call(save, {"email": "a@b.com", "route": "bad"}, method="DELETE")[0] == 400
 
 
+# ---------------- save: dates ----------------
+D = {"depart_from": "2026-12-10", "depart_to": "2026-12-20", "return_from": "2026-12-15", "return_to": "2026-12-31"}
+
+
+def call_d(mod, dates, **extra):
+    body = {"email": "a@b.com", "origin": "TPE", "destination": "NRT", "target_price": 9000, **extra}
+    if dates is not ...:
+        body["dates"] = dates
+    return call(mod, body)
+
+
+def test_save_with_dates_then_target_only_update_keeps_them(aws, monkeypatch):
+    save = load("flight-save-subscription")
+    monkeypatch.setattr(save, "today_taipei", lambda: TODAY)
+    code, body = call_d(save, D)
+    assert code == 200 and body["dates"] == D
+    call_d(save, ..., target_price=8000)  # no "dates" key -> keep
+    item = aws.Table("subscriptions").get_item(Key={"email": "a@b.com", "route": "TPE-NRT"})["Item"]
+    assert int(item["target_price"]) == 8000 and {k: item[k] for k in D} == D
+    call_d(save, None)  # explicit null -> clear
+    item = aws.Table("subscriptions").get_item(Key={"email": "a@b.com", "route": "TPE-NRT"})["Item"]
+    assert not any(k in item for k in D)
+
+
+@pytest.mark.parametrize("patch,msg", [
+    ({"depart_from": "2026-11-06"}, "before today"),                               # yesterday
+    ({"depart_to": "2026-12-09"}, "end on or after"),                              # depart range reversed
+    ({"return_to": "2026-12-14"}, "end on or after"),                              # return range reversed
+    ({"return_from": "2026-12-10"}, "after the departure"),                        # same day as depart_from
+    ({"return_from": "2026-12-05", "return_to": "2026-12-08"}, "after the departure"),  # before departure
+    ({"depart_to": "2027-02-10"}, "at most 60 days"),
+    ({"depart_from": "2027-11-20", "depart_to": "2027-11-25", "return_from": "2027-11-26", "return_to": "2027-11-30"}, "within 365"),
+    ({"depart_from": "2026/12/10"}, "YYYY-MM-DD"),
+    ({"return_to": None}, "YYYY-MM-DD"),
+])
+def test_save_rejects_bad_dates(aws, monkeypatch, patch, msg):
+    save = load("flight-save-subscription")
+    monkeypatch.setattr(save, "today_taipei", lambda: TODAY)
+    code, body = call_d(save, {**D, **patch})
+    assert code == 400 and msg in body["error"]
+
+
+def test_save_accepts_today_and_overlapping_ranges(aws, monkeypatch):
+    save = load("flight-save-subscription")
+    monkeypatch.setattr(save, "today_taipei", lambda: TODAY)
+    # depart today..Nov 20, return Nov 8..Nov 25 (ranges overlap; each fare still needs return > depart)
+    code, _ = call_d(save, {"depart_from": "2026-11-07", "depart_to": "2026-11-20",
+                            "return_from": "2026-11-08", "return_to": "2026-11-25"})
+    assert code == 200
+    assert call_d(save, "not-an-object")[0] == 400
+
+
 # ---------------- parser ----------------
 class FakeResp(io.BytesIO):
     def __enter__(self):
@@ -120,54 +172,145 @@ class FakeResp(io.BytesIO):
         return False
 
 
-def fake_urlopen(responses):
+TODAY = __import__("datetime").date(2026, 11, 7)
+
+
+def v3(dep, ret, price, o="TSA", d="HND", airline="CI", city_o="TPE", city_d="TYO"):
+    """One /v3/prices_for_dates item. dep/ret are YYYY-MM-DD."""
+    return {"origin": city_o, "origin_airport": o, "destination": city_d, "destination_airport": d,
+            "price": price, "airline": airline, "departure_at": f"{dep}T18:25:00+08:00",
+            "return_at": f"{ret}T07:55:00+09:00" if ret else None, "transfers": 0}
+
+
+def fake_v3(table, calls=None):
+    """table: {(currency, dep_month, ret_month_or_None): [items]}"""
+    from urllib.parse import parse_qs, urlparse
+
     def _open(req, timeout=10):
-        cur = "usd" if "currency=usd" in req.full_url else "twd"
-        return FakeResp(json.dumps(responses[cur]).encode())
+        q = {k: v[0] for k, v in parse_qs(urlparse(req.full_url).query).items()}
+        key = (q["currency"], q["departure_at"], q.get("return_at"))
+        if calls is not None:
+            calls.append(key)
+        items = table.get(key)
+        body = {"success": True, "data": items or [], "currency": q["currency"]}
+        return FakeResp(json.dumps(body).encode())
     return _open
 
 
-def test_parser_reads_city_keyed_response_and_matches(aws, monkeypatch):
+def queued():
+    q = boto3.client("sqs")
+    url = q.get_queue_url(QueueName="flight-fare-queue")["QueueUrl"]
+    return [json.loads(m["Body"]) for m in q.receive_message(QueueUrl=url, MaxNumberOfMessages=10).get("Messages", [])]
+
+
+def sub(t, email, o, d, target, dates=None):
+    item = {"email": email, "route": f"{o}-{d}", "origin": o, "destination": d, "target_price": target}
+    if dates:
+        item.update(dict(zip(["depart_from", "depart_to", "return_from", "return_to"], dates)))
+    t.put_item(Item=item)
+
+
+def test_parser_undated_uses_next_month_and_exact_airports(aws, monkeypatch):
     parser = load("flight-parser")
+    monkeypatch.setattr(parser, "today_taipei", lambda: TODAY)
     t = aws.Table("subscriptions")
-    t.put_item(Item={"email": "hi@x.com", "route": "TSA-HND", "origin": "TSA", "destination": "HND", "target_price": 15000})
-    t.put_item(Item={"email": "lo@x.com", "route": "TSA-HND", "origin": "TSA", "destination": "HND", "target_price": 10000})
-    t.put_item(Item={"email": "other@x.com", "route": "TPE-NRT", "origin": "TPE", "destination": "NRT", "target_price": 99999})
-    offer = {"airline": "CI", "departure_at": "2026-12-17T18:25:00+08:00", "return_at": "2026-12-22T07:55:00+09:00"}
-    # destination asked: HND, but the API keys the result by city "TYO"
-    monkeypatch.setattr(parser.urllib.request, "urlopen", fake_urlopen({
-        "twd": {"success": True, "data": {"TYO": {"0": dict(offer, price=14935), "1": dict(offer, price=16000)}}},
-        "usd": {"success": True, "data": {"TYO": {"0": dict(offer, price=470)}}}}))
+    sub(t, "hi@x.com", "TSA", "HND", 15000)
+    sub(t, "lo@x.com", "TSA", "HND", 10000)
+    calls = []
+    monkeypatch.setattr(parser.urllib.request, "urlopen", fake_v3({
+        ("twd", "2026-12", None): [v3("2026-12-17", "2026-12-22", 14935),
+                                   v3("2026-12-03", "2026-12-08", 9000, o="TPE"),   # wrong airport (TPE, not TSA)
+                                   v3("2026-12-04", "2026-12-09", 9500, d="NRT")],  # wrong airport (NRT, not HND)
+        ("usd", "2026-12", None): [v3("2026-12-17", "2026-12-22", 470)]}, calls))
     r = parser.handler({"origin": "TSA", "destination": "HND", "route": "TSA-HND"}, None)
-    assert r == {"ok": True, "route": "TSA-HND", "matched": 1, "cheapest_twd": 14935}
-    q = boto3.client("sqs")
-    msgs = q.receive_message(QueueUrl=q.get_queue_url(QueueName="flight-fare-queue")["QueueUrl"],
-                             MaxNumberOfMessages=10)["Messages"]
-    assert len(msgs) == 1
-    body = json.loads(msgs[0]["Body"])
-    assert body["email"] == "hi@x.com" and body["cheapest"]["price"] == 14935 and body["cheapest_usd"]["price"] == 470
+    assert r["matched"] == 1
+    msgs = queued()
+    assert [m["email"] for m in msgs] == ["hi@x.com"]
+    assert msgs[0]["cheapest"]["price"] == 14935 and msgs[0]["cheapest_usd"]["price"] == 470
+    assert "window" not in msgs[0]
+    assert ("twd", "2026-12", None) in calls
 
 
-def test_parser_usd_failure_still_sends_twd_only(aws, monkeypatch):
+def test_parser_respects_date_window(aws, monkeypatch):
     parser = load("flight-parser")
-    aws.Table("subscriptions").put_item(Item={"email": "a@x.com", "route": "ICN-HKG", "origin": "ICN",
-                                              "destination": "HKG", "target_price": 9000})
-    offer = {"airline": "UO", "departure_at": "2026-12-10T15:45:00+09:00", "return_at": "2026-12-14T21:05:00+08:00"}
-    monkeypatch.setattr(parser.urllib.request, "urlopen", fake_urlopen({
-        "twd": {"success": True, "data": {"HKG": {"0": dict(offer, price=6179)}}},
-        "usd": {"success": False, "data": {}}}))
+    monkeypatch.setattr(parser, "today_taipei", lambda: TODAY)
+    t = aws.Table("subscriptions")
+    # wants to leave Dec 10-20 and come back Dec 20-31
+    sub(t, "win@x.com", "TPE", "NRT", 10000, ("2026-12-10", "2026-12-20", "2026-12-20", "2026-12-31"))
+    items = [v3("2026-12-01", "2026-12-17", 8063, o="TPE", d="NRT"),   # cheapest overall but departs Dec 1 -> outside
+             v3("2026-12-17", "2026-12-22", 8790, o="TPE", d="NRT"),   # inside
+             v3("2026-12-12", "2026-12-13", 7000, o="TPE", d="NRT"),   # departs inside, returns Dec 13 -> outside
+             v3("2026-12-16", "2026-12-28", 13054, o="TPE", d="NRT")]  # inside but pricier
+    monkeypatch.setattr(parser.urllib.request, "urlopen", fake_v3({("twd", "2026-12", "2026-12"): items}))
+    assert parser.handler({"origin": "TPE", "destination": "NRT"}, None)["matched"] == 1
+    m = queued()[0]
+    assert m["cheapest"]["price"] == 8790 and m["cheapest"]["depart_date"].startswith("2026-12-17")
+    assert m["window"] == {"depart_from": "2026-12-10", "depart_to": "2026-12-20",
+                           "return_from": "2026-12-20", "return_to": "2026-12-31"}
+    assert "cheapest_usd" not in m  # USD query returned nothing -> TWD only
+
+
+def test_parser_window_cheapest_above_target_is_not_sent(aws, monkeypatch):
+    parser = load("flight-parser")
+    monkeypatch.setattr(parser, "today_taipei", lambda: TODAY)
+    sub(aws.Table("subscriptions"), "a@x.com", "TPE", "NRT", 8500,
+        ("2026-12-10", "2026-12-20", "2026-12-20", "2026-12-31"))
+    monkeypatch.setattr(parser.urllib.request, "urlopen", fake_v3({("twd", "2026-12", "2026-12"): [
+        v3("2026-12-01", "2026-12-17", 8063, o="TPE", d="NRT"),     # below target but outside window
+        v3("2026-12-17", "2026-12-22", 8790, o="TPE", d="NRT")]}))  # in window but above target
+    assert parser.handler({"origin": "TPE", "destination": "NRT"}, None)["matched"] == 0
+    assert queued() == []
+
+
+def test_parser_queries_every_month_pair_across_months(aws, monkeypatch):
+    parser = load("flight-parser")
+    monkeypatch.setattr(parser, "today_taipei", lambda: TODAY)
+    sub(aws.Table("subscriptions"), "a@x.com", "ICN", "HKG", 9500,
+        ("2026-12-25", "2027-01-05", "2026-12-30", "2027-01-10"))
+    calls = []
+    monkeypatch.setattr(parser.urllib.request, "urlopen", fake_v3({
+        ("twd", "2026-12", "2027-01"): [v3("2026-12-31", "2027-01-02", 9264, o="ICN", d="HKG", city_o="SEL", city_d="HKG")]},
+        calls))
     assert parser.handler({"origin": "ICN", "destination": "HKG"}, None)["matched"] == 1
-    q = boto3.client("sqs")
-    m = q.receive_message(QueueUrl=q.get_queue_url(QueueName="flight-fare-queue")["QueueUrl"])["Messages"][0]
-    body = json.loads(m["Body"])
-    assert "cheapest_usd" not in body and body["route"] == "ICN-HKG"
+    twd_calls = sorted(c for c in calls if c[0] == "twd")
+    # dep Dec+Jan x ret Dec+Jan, skipping return-month-before-departure-month (Jan/Dec)
+    assert twd_calls == [("twd", "2026-12", "2026-12"), ("twd", "2026-12", "2027-01"), ("twd", "2027-01", "2027-01")]
 
 
-def test_parser_no_fare_is_noop(aws, monkeypatch):
+def test_parser_skips_expired_and_clamps_to_today(aws, monkeypatch):
     parser = load("flight-parser")
-    monkeypatch.setattr(parser.urllib.request, "urlopen", fake_urlopen({
-        "twd": {"success": True, "data": {}}, "usd": {"success": True, "data": {}}}))
+    monkeypatch.setattr(parser, "today_taipei", lambda: TODAY)
+    t = aws.Table("subscriptions")
+    sub(t, "old@x.com", "TSA", "HND", 99999, ("2026-10-01", "2026-10-10", "2026-10-05", "2026-10-15"))   # expired
+    sub(t, "now@x.com", "TSA", "HND", 99999, ("2026-11-01", "2026-11-20", "2026-11-10", "2026-11-30"))   # partly past
+    calls = []
+    monkeypatch.setattr(parser.urllib.request, "urlopen", fake_v3({("twd", "2026-11", "2026-11"): [
+        v3("2026-11-05", "2026-11-12", 5000),    # departs before today (Nov 7) -> ignored
+        v3("2026-11-09", "2026-11-15", 6000)]}, calls))
+    assert parser.handler({"origin": "TSA", "destination": "HND"}, None)["matched"] == 1
+    m = queued()[0]
+    assert m["email"] == "now@x.com" and m["cheapest"]["price"] == 6000
+    assert all(c[1] != "2026-10" for c in calls)
+
+
+def test_parser_api_errors_are_noop(aws, monkeypatch):
+    parser = load("flight-parser")
+    monkeypatch.setattr(parser, "today_taipei", lambda: TODAY)
+    sub(aws.Table("subscriptions"), "a@x.com", "HKG", "TSA", 99999)
+
+    def boom(req, timeout=10):
+        raise parser.urllib.error.HTTPError(req.full_url, 429, "Too Many", {}, None)
+    monkeypatch.setattr(parser.urllib.request, "urlopen", boom)
     assert parser.handler({"origin": "HKG", "destination": "TSA"}, None)["matched"] == 0
+
+
+def test_parser_legacy_city_rows_match_city_codes(aws, monkeypatch):
+    parser = load("flight-parser")
+    monkeypatch.setattr(parser, "today_taipei", lambda: TODAY)
+    sub(aws.Table("subscriptions"), "a@x.com", "TPE", "TYO", 9000)
+    monkeypatch.setattr(parser.urllib.request, "urlopen", fake_v3({("twd", "2026-12", None): [
+        v3("2026-12-01", "2026-12-17", 8063, o="TPE", d="NRT")]}))  # destination city TYO
+    assert parser.handler({"origin": "TPE", "destination": "TYO"}, None)["matched"] == 1
 
 
 # ---------------- wrapper ----------------
@@ -192,6 +335,10 @@ def test_notification_labels_and_booking_link():
     assert n.booking_url(fare) == "https://www.aviasales.com/search/TSA1712HND22121"
     assert "約 US$470" in n.render_html(fare, 15000, usd_price=470)
     assert "US$" not in n.render_text(fare, 15000)
+    win = {"depart_from": "2026-12-10", "depart_to": "2026-12-20", "return_from": "2026-12-20", "return_to": "2026-12-31"}
+    line = "你的日期區間：去程 2026-12-10 ~ 2026-12-20，回程 2026-12-20 ~ 2026-12-31"
+    assert line in n.render_text(fare, 15000, window=win) and line in n.render_html(fare, 15000, window=win)
+    assert "日期區間" not in n.render_text(fare, 15000)
 
 
 def test_notification_dedup_lock_under_concurrency(aws, monkeypatch):

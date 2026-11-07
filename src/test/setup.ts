@@ -5,6 +5,14 @@ Object.defineProperty(window, "scrollTo", {
   value: () => {},
 });
 
+// Radix (Switch, Popover) measures elements with ResizeObserver, which jsdom lacks.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+globalThis.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObserver;
+
 Object.defineProperty(window, "matchMedia", {
   writable: true,
   value: (query: string) => ({

@@ -1,12 +1,22 @@
 """flight-save-subscription
-POST   /subscribe  {email, origin, destination, target_price}  -> upsert one route subscription
-DELETE /subscribe  {email, route}                              -> remove it
+POST   /subscribe  {email, origin, destination, target_price, dates?}  -> upsert one route subscription
+DELETE /subscribe  {email, route}                                      -> remove it
+
+dates (optional): {"depart_from","depart_to","return_from","return_to"} as YYYY-MM-DD.
+  - key absent  -> existing dates are kept (e.g. a target-only update)
+  - null        -> dates removed (any departure next month)
+  - object      -> validated and stored
 (Legacy: POST {email, plan_name: tokyo|seoul, target_price} still maps to TPE-TYO / TPE-SEL.)
 """
 import json, re
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import boto3
+
+TAIPEI = timezone(timedelta(hours=8))  # Taiwan has no DST
+MAX_RANGE_DAYS = 60    # each range spans at most 60 days (bounds API calls per run)
+MAX_AHEAD_DAYS = 365   # Travelpayouts has little data further out
+DATE_KEYS = ("depart_from", "depart_to", "return_from", "return_to")
 
 # airport -> metro area; two airports in the same metro can't form a route
 AIRPORTS = {"TSA": "TPE", "TPE": "TPE", "HND": "TYO", "NRT": "TYO", "HKG": "HKG", "ICN": "SEL"}
@@ -30,6 +40,33 @@ def _method(event):
 
 def _metro(code):
     return AIRPORTS.get(code) or LEGACY.get(code)
+
+
+def today_taipei():
+    return datetime.now(TAIPEI).date()
+
+
+def validate_dates(raw, today=None):
+    """Return (dates_dict, None) or (None, error). raw must be a dict with the four keys."""
+    today = today or today_taipei()
+    if not isinstance(raw, dict):
+        return None, "dates must be an object"
+    try:
+        d = {k: date.fromisoformat(str(raw.get(k, ""))) for k in DATE_KEYS}
+    except ValueError:
+        return None, "dates must be YYYY-MM-DD: depart_from, depart_to, return_from, return_to"
+    if d["depart_from"] < today:
+        return None, "departure can't be before today"
+    if d["depart_to"] < d["depart_from"] or d["return_to"] < d["return_from"]:
+        return None, "each range must end on or after its start"
+    if d["return_from"] <= d["depart_from"]:
+        return None, "return dates must be after the departure date"
+    if (d["depart_to"] - d["depart_from"]).days > MAX_RANGE_DAYS or \
+       (d["return_to"] - d["return_from"]).days > MAX_RANGE_DAYS:
+        return None, f"each range can span at most {MAX_RANGE_DAYS} days"
+    if (d["depart_to"] - today).days > MAX_AHEAD_DAYS or (d["return_to"] - today).days > MAX_AHEAD_DAYS + MAX_RANGE_DAYS:
+        return None, f"dates must be within {MAX_AHEAD_DAYS} days from today"
+    return {k: v.isoformat() for k, v in d.items()}, None
 
 
 def handler(event, context):
@@ -71,12 +108,27 @@ def handler(event, context):
         return resp(400, {"error": "target_price must be a positive TWD amount"})
     tp = tp.quantize(Decimal("1"))
 
+    dates = None
+    if "dates" in data and data["dates"] is not None:
+        dates, err = validate_dates(data["dates"])
+        if err:
+            return resp(400, {"error": err})
+
     route = f"{origin}-{dest}"
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    ddb.update_item(
-        Key={"email": email, "route": route},
-        UpdateExpression=("SET origin=:o, destination=:d, target_price=:t, currency=:c, "
-                          "updated_at=:n, created_at=if_not_exists(created_at, :n)"),
-        ExpressionAttributeValues={":o": origin, ":d": dest, ":t": tp, ":c": "TWD", ":n": now})
-    return resp(200, {"ok": True, "email": email, "route": route, "origin": origin,
-                      "destination": dest, "target_price": int(tp), "currency": "TWD"})
+    sets = ("origin=:o, destination=:d, target_price=:t, currency=:c, "
+            "updated_at=:n, created_at=if_not_exists(created_at, :n)")
+    values = {":o": origin, ":d": dest, ":t": tp, ":c": "TWD", ":n": now}
+    expr = "SET " + sets
+    if dates:
+        expr += ", " + ", ".join(f"{k}=:{k}" for k in DATE_KEYS)
+        values.update({f":{k}": v for k, v in dates.items()})
+    elif "dates" in data:  # explicit null -> clear the window
+        expr += " REMOVE " + ", ".join(DATE_KEYS)
+    ddb.update_item(Key={"email": email, "route": route}, UpdateExpression=expr,
+                    ExpressionAttributeValues=values)
+    out = {"ok": True, "email": email, "route": route, "origin": origin,
+           "destination": dest, "target_price": int(tp), "currency": "TWD"}
+    if dates:
+        out["dates"] = dates
+    return resp(200, out)

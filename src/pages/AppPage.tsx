@@ -1,14 +1,22 @@
 import { Link, useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
-import { Plane, LogOut, BadgeCheck, ArrowRightLeft, Trash2 } from "lucide-react";
+import { Plane, LogOut, BadgeCheck, ArrowRightLeft, Trash2, CalendarDays } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuthUser } from "@/components/RequireAuth";
 import { usePageMeta } from "@/lib/page-meta";
+import { DateRangeField } from "@/components/DateRangeField";
+import { Switch } from "@/components/ui/switch";
 import {
   AIRPORTS,
   airportLabel,
+  dateError,
+  isoDate,
+  parseIsoDate,
+  rangeLabel,
+  windowOf,
+  type DraftWindow,
   deleteSubscription,
   listSubscriptions,
   routeError,
@@ -104,12 +112,35 @@ function NewAlertForm({ email, existing }: { email: string; existing: Subscripti
   const [origin, setOrigin] = useState("TSA");
   const [destination, setDestination] = useState("HND");
   const [price, setPrice] = useState("");
-  const error = routeError(origin, destination);
+  const [useDates, setUseDates] = useState(false);
+  const [win, setWin] = useState<DraftWindow>({});
+  const today = isoDate(new Date());
+  const tomorrowOf = (s: string) => {
+    const d = parseIsoDate(s);
+    d.setDate(d.getDate() + 1);
+    return isoDate(d);
+  };
+  const routeErr = routeError(origin, destination);
+  const datesErr = useDates ? dateError(win, today) : null;
+  const error = routeErr ?? datesErr;
   const route = `${origin}-${destination}`;
   const already = existing.some((s) => s.route === route);
 
+  function setDepart(from?: string, to?: string) {
+    setWin((w) => {
+      const next = { ...w, depart_from: from, depart_to: to };
+      // a return range that now starts on/before the departure start is no longer valid
+      if (from && w.return_from && w.return_from <= from) {
+        next.return_from = undefined;
+        next.return_to = undefined;
+      }
+      return next;
+    });
+  }
+
   const save = useMutation({
-    mutationFn: (target: number) => saveSubscription(email, origin, destination, target),
+    mutationFn: (target: number) =>
+      saveSubscription(email, origin, destination, target, useDates ? windowOf(win) : null),
     onSuccess: (res) => {
       setPrice("");
       toast.success(
@@ -117,6 +148,8 @@ function NewAlertForm({ email, existing }: { email: string; existing: Subscripti
           ? `已更新 ${shortLabel(origin)} → ${shortLabel(destination)} 目標價 NT$${res.target_price.toLocaleString()}`
           : `開始追蹤 ${shortLabel(origin)} → ${shortLabel(destination)}！`,
       );
+      setUseDates(false);
+      setWin({});
       qc.invalidateQueries({ queryKey: ["subscriptions", email] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -205,13 +238,52 @@ function NewAlertForm({ email, existing }: { email: string; existing: Subscripti
         </button>
       </div>
 
+      <div className="space-y-3 rounded-xl border border-dashed p-4">
+        <label className="flex cursor-pointer items-center gap-3 text-sm">
+          <Switch
+            checked={useDates}
+            onCheckedChange={setUseDates}
+            aria-label="指定日期 Specific dates"
+          />
+          <span>
+            指定日期 Specific dates
+            <span className="ml-2 text-xs text-muted-foreground">
+              {useDates
+                ? "只通知去程與回程都落在區間內、且低於目標價的票"
+                : "不指定：追蹤下個月任何日期的最低價"}
+            </span>
+          </span>
+        </label>
+        {useDates && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <DateRangeField
+              label="去程日期 Departure"
+              from={win.depart_from}
+              to={win.depart_to}
+              minDate={today}
+              onChange={setDepart}
+              invalid={Boolean(datesErr && !win.depart_to)}
+            />
+            <DateRangeField
+              label="回程日期 Return"
+              from={win.return_from}
+              to={win.return_to}
+              minDate={win.depart_from ? tomorrowOf(win.depart_from) : tomorrowOf(today)}
+              defaultMonth={win.depart_to ?? win.depart_from}
+              onChange={(f, t) => setWin((w) => ({ ...w, return_from: f, return_to: t }))}
+              invalid={Boolean(datesErr && win.depart_to && !win.return_to)}
+            />
+          </div>
+        )}
+      </div>
+
       {error ? (
         <p className="text-sm text-destructive">{error}</p>
       ) : (
         already && (
           <p className="text-sm text-muted-foreground">
-            你已經在追蹤這條航線，送出會更新目標價。You already track this route — submitting
-            updates the target.
+            你已經在追蹤這條航線，送出會更新目標價與日期設定。You already track this route —
+            submitting updates its target and dates.
           </p>
         )
       )}
@@ -270,6 +342,7 @@ function SubscriptionRow({ email, sub }: { email: string; sub: Subscription }) {
         <p className="text-sm text-muted-foreground">
           目標價 Target ≤ NT${sub.target_price.toLocaleString()}
         </p>
+        <WindowLine sub={sub} />
       </div>
       <div className="flex items-center gap-2">
         <input
@@ -300,5 +373,27 @@ function SubscriptionRow({ email, sub }: { email: string; sub: Subscription }) {
         </button>
       </div>
     </form>
+  );
+}
+
+function WindowLine({ sub }: { sub: Subscription }) {
+  const w = windowOf(sub);
+  if (!w) {
+    return (
+      <p className="text-xs text-muted-foreground">日期：下個月任何日期 Any date next month</p>
+    );
+  }
+  const expired = w.depart_to < isoDate(new Date());
+  return (
+    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+      <CalendarDays className="h-3.5 w-3.5" />
+      <span>去程 {rangeLabel(w.depart_from, w.depart_to)}</span>
+      <span>回程 {rangeLabel(w.return_from, w.return_to)}</span>
+      {expired && (
+        <span className="rounded-full bg-destructive/15 px-2 py-0.5 font-medium text-destructive">
+          已過期 Expired
+        </span>
+      )}
+    </p>
   );
 }
