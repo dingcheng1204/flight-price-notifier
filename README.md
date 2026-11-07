@@ -2,7 +2,7 @@
 
 設定航線與目標價，機票降價就通知你 — set a route and a target price, get an email when the fare drops.
 
-A static single-page app: **Vite + React 19 + React Router**, Tailwind CSS v4, TanStack Query, and Supabase for auth and data.
+A static single-page app: **Vite + React 19 + React Router**, Tailwind CSS v4, TanStack Query, and Supabase for auth and data. Originally scaffolded with [Lovable](https://lovable.dev).
 
 ## Routes
 
@@ -33,15 +33,6 @@ Environment variables (read by Vite at build time, see `.env`):
 - `VITE_SUPABASE_PUBLISHABLE_KEY`
 
 Only the publishable (anon) key belongs here — it ships to the browser. Never put a service-role key in a `VITE_*` variable.
-
-## Database
-
-The schema (`profiles`, `price_alerts`, row-level-security policies and the new-user trigger) is in `supabase/migrations/`. Apply it to a Supabase project with the [Supabase CLI](https://supabase.com/docs/guides/cli):
-
-```sh
-supabase link --project-ref <your-project-ref>
-supabase db push
-```
 
 ## Deploying to Vercel
 
