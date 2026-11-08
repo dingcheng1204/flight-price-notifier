@@ -79,7 +79,7 @@ flowchart LR
 │   ├── tests/test_lambdas.py     backend tests (moto, no real AWS)
 │   ├── build_zip.py              deterministic zip builder for deploys
 │   └── README.md                 backend details and redeploy steps
-├── .claude/skills/       course skills (M0 checklist, Lovable/Supabase rules)
+├── .claude/skills/       course skills (M0 guide + checklist, Supabase rules)
 ├── vercel.json           SPA rewrites + build settings
 └── index.html
 ```
@@ -178,7 +178,4 @@ Errors come back as `400 {"error": "..."}` with a readable message.
 
 The project follows a course in milestones: **M0** a landing page with Supabase sign-in, scaffolded with [Lovable](https://lovable.dev) and then moved to a plain Vite SPA on Vercel. **M1** the AWS backend, route and date-window alerts, Resend email, and the custom domain. **M2** (next) subscriptions and payments.
 
-Lovable leftovers still in the repo:
-
-- Unused by the app: `drizzle/`, `supabase/`, `.lovable/`. The Drizzle migration describes the Lovable-era `profiles` / `price_alerts` tables and their sign-up trigger. Those were dropped from Supabase on 2026-11-08 (Supabase is auth-only), so don't run that migration.
-- Still wired in, but they only do anything inside the Lovable editor preview: `src/integrations/supabase/previewAuthStorage.ts` (passes the auth session to the editor) and `src/lib/lovable-error-reporting.ts` (forwards errors to the editor). On the live site they do nothing.
+All Lovable-specific code and config (editor preview hooks, the Drizzle schema, `.lovable/`, `supabase/`, and the Lovable sync notice) was removed on 2026-11-08. The app no longer depends on Lovable in any way.
