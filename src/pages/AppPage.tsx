@@ -99,7 +99,7 @@ export default function AppPage() {
         </section>
 
         <p className="text-xs text-muted-foreground">
-          每 30 分鐘檢查一次下個月的最低來回票價（TWD）。同一航線 24
+          每 10 分鐘檢查一次你指定日期區間（未指定則為下個月）的最低來回票價（TWD）。同一航線 24
           小時內最多通知一次，除非票價再降 20% 或 NT$2,000 以上。
         </p>
       </main>
