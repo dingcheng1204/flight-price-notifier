@@ -88,12 +88,24 @@ export function dateError(w: DraftWindow, today: string): string | null {
     return "結束日不能早於開始日 Each range must end on or after its start";
   if (w.return_from <= w.depart_from)
     return "回程日期必須晚於去程日期 Return must be after departure";
+  // inclusive day count: Dec 1 – Jan 29 is 60 days
   if (
-    daysBetween(w.depart_from, w.depart_to) > MAX_RANGE_DAYS ||
-    daysBetween(w.return_from, w.return_to) > MAX_RANGE_DAYS
+    daysBetween(w.depart_from, w.depart_to) + 1 > MAX_RANGE_DAYS ||
+    daysBetween(w.return_from, w.return_to) + 1 > MAX_RANGE_DAYS
   )
     return `每個區間最多 ${MAX_RANGE_DAYS} 天 Each range can span at most ${MAX_RANGE_DAYS} days`;
   return null;
+}
+
+/** Next pick in click order: first click = start, second = end, third starts over. */
+export function nextRange(
+  from: string | undefined,
+  to: string | undefined,
+  day: string,
+): [string, string | undefined] {
+  if (!from || to) return [day, undefined]; // nothing picked, or a full range → new start
+  if (day < from) return [day, undefined]; // clicked before the start → that's the new start
+  return [from, day];
 }
 
 const WEEKDAY = ["日", "一", "二", "三", "四", "五", "六"];

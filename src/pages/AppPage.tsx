@@ -112,7 +112,7 @@ function NewAlertForm({ email, existing }: { email: string; existing: Subscripti
   const [origin, setOrigin] = useState("TSA");
   const [destination, setDestination] = useState("HND");
   const [price, setPrice] = useState("");
-  const [useDates, setUseDates] = useState(false);
+  const [useDates, setUseDates] = useState(true);
   const [win, setWin] = useState<DraftWindow>({});
   const today = isoDate(new Date());
   const tomorrowOf = (s: string) => {
@@ -123,6 +123,8 @@ function NewAlertForm({ email, existing }: { email: string; existing: Subscripti
   const routeErr = routeError(origin, destination);
   const datesErr = useDates ? dateError(win, today) : null;
   const error = routeErr ?? datesErr;
+  // Dates are on by default: until something is picked, show a hint instead of a red error.
+  const pristineDates = useDates && !win.depart_from && !win.return_from;
   const route = `${origin}-${destination}`;
   const already = existing.some((s) => s.route === route);
 
@@ -148,7 +150,7 @@ function NewAlertForm({ email, existing }: { email: string; existing: Subscripti
           ? `已更新 ${shortLabel(origin)} → ${shortLabel(destination)} 目標價 NT$${res.target_price.toLocaleString()}`
           : `開始追蹤 ${shortLabel(origin)} → ${shortLabel(destination)}！`,
       );
-      setUseDates(false);
+      setUseDates(true);
       setWin({});
       qc.invalidateQueries({ queryKey: ["subscriptions", email] });
     },
@@ -262,7 +264,7 @@ function NewAlertForm({ email, existing }: { email: string; existing: Subscripti
               to={win.depart_to}
               minDate={today}
               onChange={setDepart}
-              invalid={Boolean(datesErr && !win.depart_to)}
+              invalid={Boolean(datesErr && !pristineDates && !win.depart_to)}
             />
             <DateRangeField
               label="回程日期 Return"
@@ -277,15 +279,20 @@ function NewAlertForm({ email, existing }: { email: string; existing: Subscripti
         )}
       </div>
 
-      {error ? (
+      {error && !(pristineDates && !routeErr) && (
         <p className="text-sm text-destructive">{error}</p>
-      ) : (
-        already && (
-          <p className="text-sm text-muted-foreground">
-            你已經在追蹤這條航線，送出會更新目標價與日期設定。You already track this route —
-            submitting updates its target and dates.
-          </p>
-        )
+      )}
+      {pristineDates && !routeErr && (
+        <p className="text-sm text-muted-foreground">
+          請選擇去程與回程日期，或關閉「指定日期」追蹤下個月任何日期。Pick departure and return
+          dates, or turn off Specific dates.
+        </p>
+      )}
+      {!routeErr && already && (
+        <p className="text-sm text-muted-foreground">
+          你已經在追蹤這條航線，送出會更新目標價與日期設定。You already track this route —
+          submitting updates its target and dates.
+        </p>
       )}
     </form>
   );

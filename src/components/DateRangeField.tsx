@@ -5,8 +5,7 @@ import { zhTW } from "date-fns/locale/zh-TW";
 
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { useIsMobile } from "@/hooks/use-mobile";
-import { isoDate, parseIsoDate, rangeLabel } from "@/lib/flight-api";
+import { MAX_RANGE_DAYS, isoDate, nextRange, parseIsoDate, rangeLabel } from "@/lib/flight-api";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -22,7 +21,14 @@ interface Props {
   invalid?: boolean;
 }
 
-/** A button that opens a two-month range calendar (one month on phones). */
+/** Last day an end date may fall on: a range covers at most MAX_RANGE_DAYS days, inclusive. */
+function lastAllowed(from: string): Date {
+  const d = parseIsoDate(from);
+  d.setDate(d.getDate() + MAX_RANGE_DAYS - 1);
+  return d;
+}
+
+/** A button that opens a one-month range calendar. */
 export function DateRangeField({
   label,
   from,
@@ -34,11 +40,12 @@ export function DateRangeField({
   invalid,
 }: Props) {
   const [open, setOpen] = useState(false);
-  const isMobile = useIsMobile();
   const selected: DateRange | undefined = from
     ? { from: parseIsoDate(from), to: to ? parseIsoDate(to) : undefined }
     : undefined;
-  const disabled: Matcher = { before: parseIsoDate(minDate) };
+  // While an end date is pending, days past the 60-day limit are greyed out.
+  const disabled: Matcher[] = [{ before: parseIsoDate(minDate) }];
+  if (from && !to) disabled.push({ after: lastAllowed(from) });
 
   return (
     <div className="text-sm">
@@ -62,19 +69,24 @@ export function DateRangeField({
           <Calendar
             mode="range"
             locale={zhTW}
-            numberOfMonths={isMobile ? 1 : 2}
+            numberOfMonths={1}
             selected={selected}
             defaultMonth={selected?.from ?? parseIsoDate(defaultMonth ?? minDate)}
             disabled={disabled}
             startMonth={parseIsoDate(minDate)}
-            onSelect={(r) =>
-              onChange(r?.from ? isoDate(r.from) : undefined, r?.to ? isoDate(r.to) : undefined)
-            }
+            onSelect={(_range, day) => {
+              const [f, t] = nextRange(from, to, isoDate(day));
+              onChange(f, t);
+            }}
             className="rounded-lg"
           />
           <div className="flex items-center justify-between gap-2 border-t px-3 py-2 text-xs">
             <span className="text-muted-foreground">
-              {from ? rangeLabel(from, to) : "點選開始日，再點選結束日"}
+              {from
+                ? to
+                  ? rangeLabel(from, to)
+                  : `${rangeLabel(from)} 起，再點選結束日（最多 ${MAX_RANGE_DAYS} 天）`
+                : "點選開始日，再點選結束日"}
             </span>
             <div className="flex gap-2">
               {from && (

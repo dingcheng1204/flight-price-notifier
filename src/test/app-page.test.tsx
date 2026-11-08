@@ -14,7 +14,14 @@ vi.mock("@/components/RequireAuth", () => ({
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import AppPage from "@/pages/AppPage";
-import { AIRPORTS, airportLabel, dateError, rangeLabel, routeError } from "@/lib/flight-api";
+import {
+  AIRPORTS,
+  airportLabel,
+  dateError,
+  nextRange,
+  rangeLabel,
+  routeError,
+} from "@/lib/flight-api";
 import { toast } from "sonner";
 
 // ---- in-memory fake of the AWS API ----
@@ -84,6 +91,13 @@ function fakeFetch(input: RequestInfo | URL, init?: RequestInit) {
   return json(405, { error: "nope" });
 }
 
+/** "Specific dates" starts on; undated tests switch it off. */
+function turnDatesOff() {
+  const sw = screen.getByRole("switch", { name: /指定日期/ });
+  expect(sw).toBeChecked();
+  fireEvent.click(sw);
+}
+
 function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -145,6 +159,7 @@ describe("AppPage", () => {
   it("adds TSA → HND, then HND → TSA (both directions), then updates and deletes", async () => {
     renderPage();
     await screen.findByText(/東京（所有機場）/);
+    turnDatesOff();
     const from = screen.getByLabelText("出發地 From") as HTMLSelectElement;
     const to = screen.getByLabelText("目的地 To") as HTMLSelectElement;
     const price = screen.getByPlaceholderText("例如 8000");
@@ -171,6 +186,7 @@ describe("AppPage", () => {
     expect(from.value).toBe("HND");
     expect(to.value).toBe("TSA");
     fireEvent.change(price, { target: { value: "14000" } });
+    turnDatesOff(); // the form resets to dates-on after each save
     fireEvent.click(screen.getByRole("button", { name: /開始追蹤 Track/ }));
     expect(
       await screen.findByText(/東京羽田 Tokyo Haneda \(HND\) → 台北松山 Taipei Songshan \(TSA\)/),
@@ -245,6 +261,21 @@ describe("date window helpers", () => {
   ])("rejects %o", (patch, msg) => {
     expect(dateError({ ...ok, ...patch }, "2026-11-07")).toMatch(msg);
   });
+  it("counts a range inclusively: 60 days ok, 61 rejected", () => {
+    expect(
+      dateError({ ...ok, depart_from: "2026-12-01", depart_to: "2027-01-29" }, "2026-11-07"),
+    ).toBeNull();
+    expect(
+      dateError({ ...ok, depart_from: "2026-12-01", depart_to: "2027-01-30" }, "2026-11-07"),
+    ).toMatch(/最多 60 天/);
+  });
+  it("picks in click order: start, end, then a new start", () => {
+    expect(nextRange(undefined, undefined, "2026-12-10")).toEqual(["2026-12-10", undefined]);
+    expect(nextRange("2026-12-10", undefined, "2026-12-20")).toEqual(["2026-12-10", "2026-12-20"]);
+    expect(nextRange("2026-12-10", "2026-12-20", "2026-12-15")).toEqual(["2026-12-15", undefined]);
+    expect(nextRange("2026-12-10", undefined, "2026-12-05")).toEqual(["2026-12-05", undefined]);
+    expect(nextRange("2026-12-10", undefined, "2026-12-10")).toEqual(["2026-12-10", "2026-12-10"]);
+  });
   it("formats ranges with weekday", () => {
     expect(rangeLabel("2026-12-10", "2026-12-20")).toBe("12/10（四） – 12/20（日）");
     expect(rangeLabel("2026-12-10", "2026-12-10")).toBe("12/10（四）");
@@ -274,6 +305,7 @@ describe("AppPage date windows", () => {
     fireEvent.click(screen.getByRole("button", { name: "完成" }));
     await act(() => new Promise((r) => setTimeout(r, 0)));
   };
+  const nextMonth = () => fireEvent.click(screen.getByRole("button", { name: /next month/i }));
   const pick = (gridIndex: number, day: string) =>
     fireEvent.click(dayIn(screen.getAllByRole("grid")[gridIndex]!, day));
 
@@ -282,18 +314,20 @@ describe("AppPage date windows", () => {
     await screen.findByText(/東京（所有機場）/);
     fireEvent.change(screen.getByPlaceholderText("例如 8000"), { target: { value: "16000" } });
 
-    expect(screen.queryByLabelText("去程日期 Departure")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("switch", { name: /指定日期/ }));
+    // dates are on by default; nothing picked yet → a hint, not a red error
+    expect(screen.getByRole("switch", { name: /指定日期/ })).toBeChecked();
     const track = screen.getByRole("button", { name: /開始追蹤 Track/ });
     expect(track).toBeDisabled();
-    expect(screen.getByText(/請選擇去程日期範圍/)).toBeInTheDocument();
+    expect(screen.getByText(/請選擇去程與回程日期/)).toBeInTheDocument();
 
-    // departure: Dec 10 – Dec 20 (calendar opens on Nov + Dec)
+    // departure: Dec 10 – Dec 20 (calendar shows one month: Nov, then Next → Dec)
     fireEvent.click(screen.getByRole("button", { name: "去程日期 Departure" }));
     let grids = await screen.findAllByRole("grid");
+    expect(grids).toHaveLength(1);
     expect(dayIn(grids[0]!, "7")).not.toBeDisabled(); // today
-    pick(1, "10");
-    pick(1, "20");
+    nextMonth();
+    pick(0, "10");
+    pick(0, "20");
     await done();
     expect(screen.getByRole("button", { name: "去程日期 Departure" })).toHaveTextContent(
       "12/10（四） – 12/20（日）",
@@ -328,14 +362,35 @@ describe("AppPage date windows", () => {
     expect(screen.getByText("回程 12/15（二） – 12/31（四）")).toBeInTheDocument();
   });
 
+  it("restarts on the third click and greys out days past the 60-day limit", async () => {
+    renderPage();
+    await screen.findByText(/東京（所有機場）/);
+    const field = () => screen.getByRole("button", { name: "去程日期 Departure" });
+    fireEvent.click(field());
+    await screen.findAllByRole("grid");
+    pick(0, "10"); // Nov 10 = start
+    // Nov 10 + 59 days = Jan 8 is the last allowed end; Jan 9 is disabled
+    nextMonth();
+    nextMonth();
+    const jan = screen.getAllByRole("grid")[0]!;
+    expect(dayIn(jan, "8")).not.toBeDisabled();
+    expect(dayIn(jan, "9")).toBeDisabled();
+    pick(0, "8"); // end
+    expect(field()).toHaveTextContent("11/10（二） – 1/8（五）");
+    pick(0, "3"); // third click: new start, end cleared
+    expect(field()).toHaveTextContent("1/3（日）");
+    expect(field()).not.toHaveTextContent("–");
+    await done();
+  });
+
   it("clears the return range when the departure start moves past it", async () => {
     renderPage();
     await screen.findByText(/東京（所有機場）/);
-    fireEvent.click(screen.getByRole("switch", { name: /指定日期/ }));
     fireEvent.click(screen.getByRole("button", { name: "去程日期 Departure" }));
     let grids = await screen.findAllByRole("grid");
-    pick(1, "1");
-    pick(1, "3");
+    nextMonth();
+    pick(0, "1");
+    pick(0, "3");
     await done();
     fireEvent.click(screen.getByRole("button", { name: "回程日期 Return" }));
     grids = await screen.findAllByRole("grid");
@@ -347,8 +402,9 @@ describe("AppPage date windows", () => {
     fireEvent.click(screen.getByRole("button", { name: "去程日期 Departure" }));
     fireEvent.click(screen.getByRole("button", { name: /清除/ }));
     grids = await screen.findAllByRole("grid");
-    pick(1, "10");
-    pick(1, "12");
+    nextMonth();
+    pick(0, "10");
+    pick(0, "12");
     await done();
     expect(screen.getByRole("button", { name: "回程日期 Return" })).toHaveTextContent("選擇日期");
   });
