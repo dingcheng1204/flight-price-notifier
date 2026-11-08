@@ -78,7 +78,7 @@ export function DateRangeField({
               const [f, t] = nextRange(from, to, isoDate(day));
               onChange(f, t);
             }}
-            className="rounded-lg"
+            className="mx-auto bg-transparent"
           />
           <div className="flex items-center justify-between gap-2 border-t px-3 py-2 text-xs">
             <span className="text-muted-foreground">

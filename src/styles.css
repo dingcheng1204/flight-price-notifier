@@ -13,6 +13,8 @@
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary-glow: var(--primary-glow);
@@ -30,6 +32,8 @@
   --foreground: #173a4e;          /* deep ocean ink */
   --card: #fbf6e9;                /* ivory apron */
   --card-foreground: #173a4e;
+  --popover: #fbf6e9;             /* ivory, same as cards */
+  --popover-foreground: #173a4e;
   --primary: #2b5f78;             /* ocean teal-blue */
   --primary-glow: #4f8ea3;        /* sunlit water */
   --primary-foreground: #fbf6e9;
