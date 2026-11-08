@@ -20,37 +20,247 @@ A small full-stack project: a React single-page app on Vercel, Supabase for sign
 
 ## Architecture
 
+> Detailed diagrams below; a full review of services, tools, third parties, and recommendations (Traditional Chinese) is in [`docs/PROJECT-REVIEW.md`](docs/PROJECT-REVIEW.md).
+
+### System overview
+
 ```mermaid
 flowchart LR
-  subgraph Browser
-    SPA["React SPA<br/>(Vercel, flight.dinxnai.com)"]
-  end
-  SPA -- sign-up / sign-in --> SB[(Supabase Auth)]
-  SPA -- "POST/DELETE /subscribe<br/>GET /subscriptions" --> API[API Gateway<br/>flight-api]
-  API --> SAVE[λ flight-save-subscription]
-  API --> LIST[λ flight-list-subscriptions]
-  SAVE --> SUBS[(DynamoDB<br/>subscriptions)]
-  LIST --> SUBS
+  user(["User browser"])
 
-  EB["EventBridge<br/>rate(10 minutes)"] --> WRAP[λ flight-parser-wrapper]
-  WRAP -- "one async invoke<br/>per subscribed route" --> PARSER[λ flight-parser]
-  PARSER -- reads --> SUBS
-  PARSER -- cached fares --> TP[(Travelpayouts<br/>Data API)]
-  PARSER -- matches --> Q[[SQS<br/>flight-fare-queue]]
-  Q --> NOTIFY[λ flight-fare-notification]
-  NOTIFY <--> HIST[(DynamoDB<br/>notification_history)]
-  NOTIFY -- email --> RS[Resend]
+  subgraph CF["Cloudflare DNS - dinxnai.com"]
+    dns["CNAME flight -> Vercel<br/>send.flight / DKIM / DMARC -> Resend"]
+  end
+
+  subgraph VERCEL["Vercel"]
+    spa["React SPA - static dist/<br/>flight.dinxnai.com"]
+  end
+
+  subgraph SUPA["Supabase - auth only"]
+    auth["Supabase Auth<br/>email + password, JWT"]
+  end
+
+  subgraph AWS["AWS us-east-1"]
+    api["API Gateway HTTP API<br/>flight-api, CORS *"]
+    save["λ flight-save-subscription"]
+    list["λ flight-list-subscriptions"]
+    subs[("DynamoDB<br/>subscriptions")]
+    eb["EventBridge rule<br/>flight-price-check<br/>rate 10 minutes"]
+    wrap["λ flight-parser-wrapper"]
+    parser["λ flight-parser x N routes"]
+    q[["SQS flight-fare-queue<br/>VisibilityTimeout 180s"]]
+    notify["λ flight-fare-notification"]
+    hist[("DynamoDB<br/>notification_history")]
+    sm["Secrets Manager<br/>flight/travelpayouts<br/>flight/resend"]
+    s3[("S3 flight-config-ACCOUNT<br/>lambda/*.zip")]
+    seed["λ flight-seed<br/>deploy bridge"]
+  end
+
+  tp[("Travelpayouts<br/>Aviasales Data API v3")]
+  resend["Resend<br/>email API + SMTP"]
+  inbox(["Subscriber inbox"])
+
+  user --> dns --> spa
+  spa -- "signUp / signIn / reset" --> auth
+  auth -- "confirm + reset mail via SMTP" --> resend
+  spa -- "GET /subscriptions<br/>POST, DELETE /subscribe" --> api
+  api --> save --> subs
+  api --> list --> subs
+  save -. "reset dedup on change" .-> hist
+  eb --> wrap -- "Scan distinct routes" --> subs
+  wrap -- "async Invoke, 1 per route" --> parser
+  parser -- "Query subscribers" --> subs
+  parser -- "token" --> sm
+  parser -- "prices_for_dates" --> tp
+  parser -- "SendMessage per match" --> q
+  q -- "event source mapping, BatchSize 1" --> notify
+  notify <-- "lock + dedup + history" --> hist
+  notify -- "api_key, from" --> sm
+  notify -- "POST /emails" --> resend --> inbox
+  seed -. "PutObject" .-> s3
+  s3 -. "UpdateFunctionCode" .-> parser
 ```
+
+### Sign-up, sign-in, and password reset (Supabase)
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor U as User
+  participant SPA as SPA (Vercel)
+  participant SB as Supabase Auth
+  participant RS as Resend SMTP
+  participant MB as Mailbox
+
+  U->>SPA: /sign-up - name, email, password (min 6)
+  SPA->>SB: auth.signUp(email, password, data.display_name, emailRedirectTo = origin/auth/confirmed)
+  SB->>RS: confirmation mail, smtp.resend.com:465
+  RS->>MB: "Confirm your signup" from no-reply@flight.dinxnai.com
+  U->>MB: click link
+  MB->>SB: /auth/v1/verify?token=...
+  SB-->>SPA: 302 to flight.dinxnai.com/auth/confirmed with session tokens
+  SPA->>SPA: session saved in localStorage (persistSession, autoRefreshToken)
+  SPA->>SPA: navigate /app, RequireAuth -> auth.getUser()
+
+  Note over U,SB: Sign in
+  U->>SPA: /sign-in
+  SPA->>SB: auth.signInWithPassword(email, password)
+  SB-->>SPA: access token (JWT, 1 h) + refresh token
+
+  Note over U,MB: Forgot password
+  SPA->>SB: auth.resetPasswordForEmail(email, redirectTo = origin/reset-password)
+  SB->>RS: reset mail
+  U->>SPA: /reset-password (from mail link)
+  SPA->>SB: auth.updateUser(password)
+```
+
+Supabase stores **only** the `auth.users` rows; the `public` schema is empty. Site URL and the redirect allowlist (`https://flight.dinxnai.com/**`) are set in _Authentication → URL Configuration_.
+
+### Managing alerts (`/app` → API → DynamoDB)
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant SPA as AppPage (TanStack Query)
+  participant API as API Gateway flight-api
+  participant L as λ flight-list-subscriptions
+  participant S as λ flight-save-subscription
+  participant SUB as DynamoDB subscriptions
+  participant H as DynamoDB notification_history
+
+  SPA->>API: GET /subscriptions?email=user.email
+  API->>L: invoke (no authorizer)
+  L->>SUB: Query email = :e
+  L-->>SPA: {subscriptions: [...]}
+
+  SPA->>API: POST /subscribe {email, origin, destination, target_price, dates?}
+  API->>S: invoke
+  S->>S: validate email, airports (6, no same-city pair), price 1..1,000,000,<br/>dates (not past, return after depart, each range <= 60 d, <= 365 d ahead)
+  S->>SUB: GetItem (old) then UpdateItem SET ... created_at = if_not_exists
+  alt target or date window changed
+    S->>H: Query pk = email#route, sent_at > "1" then DeleteItem each
+  end
+  S-->>SPA: {ok, route, dedup_reset, history_cleared}
+  SPA->>SPA: invalidateQueries(["subscriptions", email])
+
+  SPA->>API: DELETE /subscribe {email, route}
+  API->>S: invoke
+  S->>SUB: DeleteItem
+  S->>H: clear history for email#route
+```
+
+### Price polling and notification (every 10 minutes)
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant EB as EventBridge flight-price-check
+  participant W as λ flight-parser-wrapper
+  participant SUB as DynamoDB subscriptions
+  participant P as λ flight-parser (one per route)
+  participant SM as Secrets Manager
+  participant TP as Travelpayouts prices_for_dates
+  participant Q as SQS flight-fare-queue
+  participant N as λ flight-fare-notification
+  participant H as DynamoDB notification_history
+  participant RS as Resend API
+
+  EB->>W: rate(10 minutes)
+  W->>SUB: Scan (origin, destination), paginated
+  W->>P: Invoke InvocationType=Event {origin, destination, route} per distinct route
+  P->>SUB: Scan/filter subscribers of this route
+  P->>P: window per subscriber - dated (depart clamped to today, expired skipped)<br/>or undated = any departure next month
+  P->>SM: flight/travelpayouts token (cached per container)
+  loop each (depart month, return month) pair, max 12
+    P->>TP: currency=twd, sorting=price, limit=1000
+  end
+  alt round trip in window
+    P->>P: cheapest offer inside window
+    P->>TP: same pair in USD (best effort, for the "≈ US$" line)
+  else dated window, no round trip
+    P->>TP: one-way outbound months + one-way inbound months
+    P->>P: cheapest outbound + later inbound = total
+  end
+  P->>Q: SendMessage {email, route, target_price, cheapest, cheapest_usd?, window?, kind?, legs?}<br/>only when price <= target
+
+  Q->>N: 1 message per invocation
+  N->>H: should_send? Query pk, sent_at > "1"
+  Note right of N: send if no history, or last send >= 24 h ago,<br/>or price dropped >= 20 % or >= NT$2,000
+  N->>H: PutItem lock row sent_at="0000-lock", lock_until=now+90s<br/>Condition: not exists OR lock_until < now
+  N->>H: re-check should_send (another worker may have sent)
+  N->>SM: flight/resend {api_key, from}
+  N->>RS: POST /emails (HTML + text)
+  alt 2xx
+    N->>H: PutItem {pk, sent_at ISO ms, price, currency}
+  else 429 / 5xx / network
+    N-->>Q: raise -> message redelivered after 180 s
+  else other 4xx
+    N->>N: log "dropped (permanent)"
+  end
+  N->>H: DeleteItem lock row
+```
+
+### DynamoDB data model
+
+Both tables are on-demand (`PAY_PER_REQUEST`), no GSIs, no TTL.
+
+```mermaid
+erDiagram
+  SUBSCRIPTIONS ||--o{ NOTIFICATION_HISTORY : "pk = email#route"
+  SUBSCRIPTIONS {
+    string email "partition key, lowercased"
+    string route "sort key, e.g. TSA-HND"
+    string origin "TSA TPE HND NRT HKG ICN"
+    string destination "different metro from origin"
+    number target_price "TWD, integer"
+    string currency "always TWD"
+    string depart_from "YYYY-MM-DD, optional"
+    string depart_to "optional"
+    string return_from "optional"
+    string return_to "optional"
+    string created_at "ISO-8601 UTC"
+    string updated_at "ISO-8601 UTC"
+    string plan_name "legacy M1 rows only"
+  }
+  NOTIFICATION_HISTORY {
+    string pk_ "attribute pk, partition key = email#route"
+    string sent_at "sort key, ISO-8601 ms, or 0000-lock"
+    string email
+    string route
+    number price "TWD sent in the alert"
+    string currency "TWD"
+    number lock_until "lock row only, epoch seconds"
+  }
+```
+
+| Table                  | Key                                   | Access patterns                                                                                                                                                    |
+| ---------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `subscriptions`        | PK `email`, SK `route`                | Query by email (list page); GetItem/UpdateItem/DeleteItem by (email, route); Scan for distinct routes (wrapper) and per-route subscribers (parser)                 |
+| `notification_history` | PK `pk` = `email#route`, SK `sent_at` | Query `sent_at > "1"` for history (skips the lock row, because `"0000-lock" < "1"`); conditional Put/Delete on `sent_at = "0000-lock"` for the per-route send lock |
+
+### Build and deploy paths
+
+```mermaid
+flowchart LR
+  dev["git push main"] --> gh[("GitHub<br/>dingcheng1204/flight-price-notifier")]
+  gh -- "Vercel Git integration" --> vb["vite build -> dist/"] --> prod["Production<br/>flight.dinxnai.com"]
+  gh -. "aws/lambdas/*/index.py<br/>(manual)" .-> zip["python3 aws/build_zip.py NAME<br/>md5 + base64"]
+  zip --> seedi["invoke λ flight-seed"] --> s3[("S3 lambda/NAME.zip")]
+  s3 -- "ETag == md5 check" --> ufc["lambda UpdateFunctionCode"]
+  zip -. "with normal AWS CLI" .-> ufc
+```
+
+There is no CI for the backend: Lambda deploys are manual, and the AWS resources themselves were created by hand (no CloudFormation/SAM/CDK/Terraform except the tiny `flight-seed` stack).
 
 | Layer     | What it uses                                                                                                              |
 | --------- | ------------------------------------------------------------------------------------------------------------------------- |
 | Front end | Vite, React 19, React Router 7, TypeScript, Tailwind CSS v4, shadcn/ui (Radix), TanStack Query, react-day-picker, sonner  |
 | Auth      | Supabase Auth. Supabase only handles sign-in; app data never goes there                                                   |
-| API       | AWS HTTP API (API Gateway v2) → Python 3 Lambdas                                                                          |
+| API       | AWS HTTP API (API Gateway v2) → Python 3.12 Lambdas (128 MB, x86_64)                                                      |
 | Data      | DynamoDB: `subscriptions`, `notification_history`                                                                         |
 | Jobs      | EventBridge schedule → fan-out Lambda → SQS → notification Lambda                                                         |
 | Fares     | [Travelpayouts / Aviasales Data API](https://support.travelpayouts.com/hc/en-us/articles/203956163) `v3/prices_for_dates` |
-| Email     | [Resend](https://resend.com), sending from `alerts@flight.dinxnai.com` (SPF/DKIM/DMARC set up)                            |
+| Email     | [Resend](https://resend.com), sending from `alerts@flight.dinxnai.com` (SPF/DKIM/DMARC set up); also Supabase's SMTP      |
 | Hosting   | Vercel (static SPA) with the domain on Cloudflare DNS                                                                     |
 
 ## How an alert happens
@@ -79,6 +289,7 @@ flowchart LR
 │   ├── tests/test_lambdas.py     backend tests (moto, no real AWS)
 │   ├── build_zip.py              deterministic zip builder for deploys
 │   └── README.md                 backend details and redeploy steps
+├── docs/PROJECT-REVIEW.md  services, tools, recommendations, rebuild-from-zero guide (zh-TW)
 ├── .claude/skills/       course skills (M0 guide + checklist, Supabase rules)
 ├── vercel.json           SPA rewrites + build settings
 └── index.html
@@ -169,6 +380,8 @@ Errors come back as `400 {"error": "..."}` with a readable message.
 **AWS.** Region `us-east-1`. Every Lambda shares the IAM role `flight-lambda-role`. Redeploy steps are in [`aws/README.md`](aws/README.md#redeploy-a-function).
 
 ## Known limitations
+
+A fuller list with priorities is in [`docs/PROJECT-REVIEW.md`](docs/PROJECT-REVIEW.md#7-目前進度與建議修改).
 
 - `GET /subscriptions?email=` and `/subscribe` trust the email the client sends; there's no JWT check against Supabase. That's fine for a course project, not for production.
 - Fares come from a 48-hour search cache, so they can be stale or missing for less popular dates. Travelpayouts sometimes answers `HTTP 400` for `currency=twd`. The parser logs it and moves on.
