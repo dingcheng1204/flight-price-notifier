@@ -63,7 +63,7 @@ export default function AppPage() {
         </Link>
         <button
           onClick={signOut}
-          className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-accent"
+          className="flex items-center gap-2 rounded-lg border border-white/40 px-3 py-2 text-sm hover:bg-white/10"
         >
           <LogOut className="h-4 w-4" /> 登出 Sign out
         </button>

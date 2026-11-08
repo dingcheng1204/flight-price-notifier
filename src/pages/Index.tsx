@@ -40,9 +40,9 @@ export default function Index() {
       <main>
         <section className="mx-auto max-w-4xl px-6 pb-20 pt-20 text-center sm:pt-28">
           <h1 className="fade-up text-5xl font-bold tracking-tight sm:text-7xl">
-            <span className="text-gradient"><span className="text-black">Flight Price</span> Notifier</span>
+            <span className="text-white">Flight Price</span> <span className="text-gradient-sky [text-shadow:none]">Notifier</span>
           </h1>
-          <p className="fade-up mt-6 text-xl font-medium text-black sm:text-2xl [animation-delay:120ms]">
+          <p className="fade-up mt-6 text-xl font-medium text-white sm:text-2xl [animation-delay:120ms]">
             設定航線與目標價，機票降價就通知你
           </p>
           <p className="fade-up mt-3 text-muted-foreground [animation-delay:220ms]">
@@ -67,7 +67,7 @@ export default function Index() {
         </section>
       </main>
 
-      <footer className="border-t py-8 text-center text-sm text-muted-foreground">
+      <footer className="border-t border-white/60 py-8 text-center text-sm font-medium text-primary [text-shadow:none]">
         © 2026 Flight Price Notifier
       </footer>
     </div>

@@ -23,7 +23,7 @@
   --color-ring: var(--ring);
 }
 
-/* Retro seaside theme — mint clapboard, pink trim, deep teal ocean, ivory lace, film grain */
+/* Theme — sky-scene page background; ivory cards with pink trim and film grain */
 :root {
   --radius: 0.75rem;
   --background: #cfe6dc;          /* mint clapboard */
@@ -43,10 +43,9 @@
   --ripple: url("./assets/theme/ripple.svg");
   --sky: linear-gradient(180deg, #dcecf2 0%, #d4eae2 38%, #cfe6dc 100%);
   --gradient-primary: linear-gradient(135deg, var(--primary), var(--primary-glow));
-  --gradient-hero:
-    url("./assets/theme/wave-left.svg") left bottom / var(--wave-size) auto no-repeat,
-    url("./assets/theme/wave-right.svg") right bottom / var(--wave-size) auto no-repeat;
-  --wave-size: clamp(170px, 30vw, 400px);
+  /* Sky scene: deep-blue sky, sun glow, cloud banks, airliner + contrail (original artwork). */
+  --gradient-hero: url("./assets/theme/sky-scene.svg") 90% bottom / cover no-repeat fixed, #0c2a55;
+  --gradient-sky-text: linear-gradient(135deg, #bfe9ff, #63c1f5);
   --shadow-glow: 0 10px 26px -12px rgb(27 66 88 / 65%);
 }
 
@@ -70,10 +69,33 @@
   }
   /* Cards and panels: ivory with film grain. */
   .bg-card { background-image: var(--grain); }
+
+  /* Text sitting directly on the sky scene is light, with a soft shadow so it
+     stays readable where it passes over the white clouds. */
+  .bg-hero {
+    --foreground: #f5f9ff;
+    --muted-foreground: #c9dbef;
+    --primary-glow: #8fd0f2;
+    color: var(--foreground);
+    text-shadow: 0 1px 2px rgb(8 28 56 / 70%), 0 0 12px rgb(8 28 56 / 45%);
+  }
+  /* Inside cards, back to the dark ink on ivory. */
+  .bg-hero .bg-card {
+    --foreground: #173a4e;
+    --muted-foreground: #4a6570;
+    --primary-glow: #4f8ea3;
+    color: var(--card-foreground);
+    text-shadow: none;
+  }
+  .bg-hero button, .bg-hero a.bg-gradient-primary { text-shadow: none; }
 }
 
 @utility bg-hero { background: var(--gradient-hero); }
 @utility bg-gradient-primary { background-image: var(--ripple), var(--gradient-primary); }
+@utility text-gradient-sky {
+  background-image: var(--gradient-sky-text);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
 @utility shadow-glow { box-shadow: var(--shadow-glow); }
 @utility text-gradient {
   background-image: var(--ripple), var(--gradient-primary);

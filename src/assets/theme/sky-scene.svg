@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+<defs>
+  <linearGradient id="sky" x1="0" y1="0" x2="1" y2="0.6">
+    <stop offset="0" stop-color="#0c2a55"/><stop offset="0.55" stop-color="#134a86"/><stop offset="1" stop-color="#1c74be"/>
+  </linearGradient>
+  <radialGradient id="sun" cx="0.93" cy="0.02" r="0.45">
+    <stop offset="0" stop-color="#5fd0ff" stop-opacity="0.9"/><stop offset="0.35" stop-color="#2fa4e6" stop-opacity="0.45"/><stop offset="1" stop-color="#1c74be" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="trail" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#ffffff" stop-opacity="0"/><stop offset="1" stop-color="#ffffff" stop-opacity="0.75"/>
+  </linearGradient>
+</defs>
+<rect width="1600" height="900" fill="url(#sky)"/>
+<rect width="1600" height="900" fill="url(#sun)"/>
+<!-- distant dark cloud wall, upper left -->
+<g fill="#1a3f72" opacity="0.85"><circle cx="-160" cy="83" r="104"/><circle cx="-86" cy="127" r="126"/><circle cx="-8" cy="179" r="91"/><circle cx="54" cy="219" r="104"/><circle cx="131" cy="240" r="140"/><circle cx="242" cy="308" r="99"/><circle cx="327" cy="359" r="121"/><circle cx="425" cy="413" r="94"/><circle cx="497" cy="423" r="108"/><polygon points="-160,90 590,503 590,950 -160,950"/></g>
+<g fill="#244d82" opacity="0.9"><circle cx="-120" cy="422" r="107"/><circle cx="11" cy="437" r="127"/><circle cx="171" cy="441" r="72"/><circle cx="263" cy="476" r="109"/><circle cx="366" cy="452" r="98"/><circle cx="476" cy="452" r="104"/><circle cx="579" cy="515" r="87"/><circle cx="683" cy="521" r="80"/><polygon points="-120,420 759,526 759,950 -120,950"/></g>
+<!-- mid layer -->
+<g fill="#3e6797" opacity="0.9"><circle cx="-100" cy="608" r="76"/><circle cx="-12" cy="626" r="64"/><circle cx="55" cy="622" r="63"/><circle cx="113" cy="595" r="82"/><circle cx="189" cy="635" r="81"/><circle cx="266" cy="620" r="71"/><circle cx="357" cy="604" r="89"/><circle cx="472" cy="625" r="62"/><circle cx="535" cy="581" r="67"/><circle cx="604" cy="582" r="101"/><circle cx="718" cy="588" r="92"/><circle cx="821" cy="566" r="63"/><circle cx="883" cy="585" r="94"/><circle cx="979" cy="582" r="89"/><circle cx="1071" cy="592" r="100"/><circle cx="1170" cy="579" r="89"/><circle cx="1281" cy="561" r="96"/><circle cx="1406" cy="563" r="66"/><circle cx="1485" cy="564" r="68"/><circle cx="1547" cy="577" r="93"/><circle cx="1652" cy="547" r="104"/><polygon points="-100,640 1774,565 1774,950 -100,950"/></g>
+<!-- contrail -->
+<path d="M560 210 L1203 128 L1205 134 Z" fill="url(#trail)"/>
+
+<g transform="translate(1330 115) rotate(-7) scale(0.75)">
+  <!-- far wing -->
+  <path d="M40 -6 L-10 -58 L-30 -60 L4 -6 Z" fill="#7cc0ec"/>
+  <!-- tail fin -->
+  <path d="M-150 -8 L-182 -70 L-160 -70 L-108 -10 Z" fill="#ffffff"/>
+  <path d="M-182 -70 L-160 -70 L-150 -50 L-172 -50 Z" fill="#2a8fd6"/>
+  <!-- fuselage -->
+  <path d="M-170 -6 C-150 -16 -60 -18 120 -16 C150 -15 168 -8 172 0 C168 8 150 12 120 12 L-60 12 C-120 12 -150 8 -170 -6 Z" fill="#ffffff"/>
+  <!-- belly stripe -->
+  <path d="M-150 4 C-110 10 -40 12 120 11 C140 11 156 8 166 4 C150 14 130 16 110 16 L-60 16 C-110 15 -140 10 -150 4 Z" fill="#2a8fd6"/>
+  <!-- tailplane -->
+  <path d="M-130 0 L-176 10 L-160 13 L-112 4 Z" fill="#2a8fd6"/>
+  <!-- cockpit window -->
+  <path d="M150 -10 C158 -9 164 -6 167 -3 L154 -3 Z" fill="#14457f"/>
+  <!-- windows -->
+  <g fill="#3d6fa8"><rect x="-110" y="-7" width="5" height="4" rx="1.5"/><rect x="-100" y="-7" width="5" height="4" rx="1.5"/><rect x="-90" y="-7" width="5" height="4" rx="1.5"/><rect x="-80" y="-7" width="5" height="4" rx="1.5"/><rect x="-70" y="-7" width="5" height="4" rx="1.5"/><rect x="-60" y="-7" width="5" height="4" rx="1.5"/><rect x="-50" y="-7" width="5" height="4" rx="1.5"/><rect x="-40" y="-7" width="5" height="4" rx="1.5"/><rect x="-30" y="-7" width="5" height="4" rx="1.5"/><rect x="-20" y="-7" width="5" height="4" rx="1.5"/><rect x="-10" y="-7" width="5" height="4" rx="1.5"/><rect x="10" y="-7" width="5" height="4" rx="1.5"/><rect x="20" y="-7" width="5" height="4" rx="1.5"/><rect x="30" y="-7" width="5" height="4" rx="1.5"/><rect x="40" y="-7" width="5" height="4" rx="1.5"/><rect x="50" y="-7" width="5" height="4" rx="1.5"/><rect x="60" y="-7" width="5" height="4" rx="1.5"/><rect x="70" y="-7" width="5" height="4" rx="1.5"/><rect x="80" y="-7" width="5" height="4" rx="1.5"/><rect x="90" y="-7" width="5" height="4" rx="1.5"/><rect x="100" y="-7" width="5" height="4" rx="1.5"/><rect x="110" y="-7" width="5" height="4" rx="1.5"/><rect x="120" y="-7" width="5" height="4" rx="1.5"/><rect x="130" y="-7" width="5" height="4" rx="1.5"/></g>
+  <!-- near wing -->
+  <path d="M30 6 L-40 64 L-62 66 L-4 6 Z" fill="#2a8fd6"/>
+  <!-- engine -->
+  <g transform="translate(4 24)"><rect x="-22" y="-8" width="44" height="17" rx="8" fill="#ffffff"/><rect x="16" y="-8" width="8" height="17" rx="3" fill="#bcd8ee"/></g>
+</g>
+<!-- pale layer -->
+<g fill="#9db6d6" opacity="0.95"><circle cx="-100" cy="721" r="70"/><circle cx="-11" cy="716" r="71"/><circle cx="70" cy="714" r="58"/><circle cx="137" cy="688" r="86"/><circle cx="225" cy="726" r="54"/><circle cx="288" cy="733" r="52"/><circle cx="355" cy="711" r="79"/><circle cx="431" cy="704" r="51"/><circle cx="478" cy="686" r="59"/><circle cx="532" cy="696" r="71"/><circle cx="619" cy="704" r="73"/><circle cx="700" cy="692" r="80"/><circle cx="781" cy="719" r="95"/><circle cx="898" cy="678" r="82"/><circle cx="979" cy="662" r="63"/><circle cx="1055" cy="703" r="68"/><circle cx="1127" cy="701" r="93"/><circle cx="1211" cy="702" r="59"/><circle cx="1275" cy="671" r="94"/><circle cx="1363" cy="690" r="78"/><circle cx="1442" cy="662" r="54"/><circle cx="1511" cy="648" r="84"/><circle cx="1595" cy="642" r="55"/><circle cx="1662" cy="668" r="58"/><polygon points="-100,730 1724,675 1724,950 -100,950"/></g>
+<!-- foreground white clouds, rising on the right -->
+<g fill="#ffffff" opacity="1.0"><circle cx="-100" cy="828" r="55"/><circle cx="-35" cy="800" r="79"/><circle cx="43" cy="803" r="51"/><circle cx="104" cy="820" r="50"/><circle cx="154" cy="814" r="57"/><circle cx="224" cy="791" r="69"/><circle cx="294" cy="839" r="51"/><circle cx="356" cy="836" r="77"/><circle cx="449" cy="834" r="83"/><circle cx="532" cy="817" r="79"/><circle cx="627" cy="814" r="68"/><circle cx="697" cy="808" r="62"/><circle cx="756" cy="835" r="78"/><circle cx="857" cy="821" r="73"/><circle cx="944" cy="828" r="50"/><circle cx="998" cy="801" r="52"/><circle cx="1056" cy="816" r="55"/><circle cx="1119" cy="797" r="61"/><circle cx="1186" cy="803" r="54"/><polygon points="-100,830 1239,830 1239,950 -100,950"/></g>
+<g fill="#ffffff" opacity="1.0"><circle cx="1000" cy="824" r="91"/><circle cx="1117" cy="785" r="77"/><circle cx="1209" cy="728" r="100"/><circle cx="1299" cy="726" r="83"/><circle cx="1383" cy="681" r="90"/><circle cx="1494" cy="649" r="117"/><circle cx="1646" cy="617" r="64"/><polygon points="1000,820 1726,588 1726,950 1000,950"/></g>
+<g fill="#ffffff" opacity="1.0"><circle cx="-100" cy="884" r="60"/><circle cx="-33" cy="862" r="55"/><circle cx="39" cy="848" r="49"/><circle cx="88" cy="858" r="48"/><circle cx="136" cy="858" r="43"/><circle cx="180" cy="851" r="57"/><circle cx="233" cy="870" r="46"/><circle cx="282" cy="885" r="62"/><circle cx="348" cy="881" r="43"/><circle cx="399" cy="877" r="52"/><circle cx="452" cy="887" r="67"/><circle cx="534" cy="853" r="69"/><circle cx="611" cy="885" r="62"/><circle cx="677" cy="875" r="44"/><circle cx="718" cy="840" r="61"/><circle cx="784" cy="847" r="54"/><circle cx="844" cy="861" r="55"/><circle cx="913" cy="890" r="66"/><circle cx="979" cy="861" r="41"/><circle cx="1017" cy="855" r="61"/><circle cx="1075" cy="863" r="49"/><circle cx="1133" cy="857" r="54"/><circle cx="1196" cy="852" r="41"/><circle cx="1245" cy="846" r="63"/><circle cx="1303" cy="877" r="55"/><circle cx="1353" cy="855" r="53"/><circle cx="1403" cy="856" r="45"/><circle cx="1452" cy="875" r="43"/><circle cx="1506" cy="844" r="61"/><circle cx="1576" cy="840" r="59"/><circle cx="1638" cy="893" r="60"/><polygon points="-100,880 1714,880 1714,950 -100,950"/></g>
+</svg>
