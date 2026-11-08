@@ -180,5 +180,5 @@ The project follows a course in milestones: **M0** a landing page with Supabase 
 
 Lovable leftovers still in the repo:
 
-- Unused by the app: `drizzle/` (an old schema from before the data moved to DynamoDB), `supabase/`, `.lovable/`.
+- Unused by the app: `drizzle/`, `supabase/`, `.lovable/`. The Drizzle migration describes the Lovable-era `profiles` / `price_alerts` tables and their sign-up trigger. Those were dropped from Supabase on 2026-11-08 (Supabase is auth-only), so don't run that migration.
 - Still wired in, but they only do anything inside the Lovable editor preview: `src/integrations/supabase/previewAuthStorage.ts` (passes the auth session to the editor) and `src/lib/lovable-error-reporting.ts` (forwards errors to the editor). On the live site they do nothing.
