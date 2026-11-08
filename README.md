@@ -117,7 +117,11 @@ bun run build      # static output in dist/
 bun run preview    # serve dist/ locally
 ```
 
-Environment variables (Vite reads them at build time; see `.env`):
+Environment variables (Vite reads them at build time). For local development, copy the template and fill it in. `.env` is git-ignored:
+
+```sh
+cp .env.example .env
+```
 
 | Variable                        | Purpose                                                                                                          |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -158,7 +162,7 @@ Errors come back as `400 {"error": "..."}` with a readable message.
 
 ## Deploying
 
-**Front end (Vercel).** Import the repo; `vercel.json` sets the Vite build (`dist/`) and rewrites every non-file path to `index.html`, so deep links like `/app` work. Every push to `main` deploys to production. If `.env` isn't committed, add the `VITE_*` variables under _Project → Settings → Environment Variables_.
+**Front end (Vercel).** Import the repo; `vercel.json` sets the Vite build (`dist/`) and rewrites every non-file path to `index.html`, so deep links like `/app` work. Every push to `main` deploys to production. The `VITE_SUPABASE_*` variables live in _Project → Settings → Environment Variables_ (set for Production, Preview, and Development). `.env` isn't committed.
 
 **Supabase.** In _Authentication → URL Configuration_, set the Site URL to your domain and add `https://<domain>/**` to the redirect allowlist, so confirmation and reset links come back to the site. Custom SMTP goes through Resend.
 

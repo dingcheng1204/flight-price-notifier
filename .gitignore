@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Local env files (real values live in Vercel → Settings → Environment Variables)
+.env
+.env.*
+!.env.example
+
 .vercel
 
 # Editor directories and files
