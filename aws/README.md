@@ -1,6 +1,7 @@
 # AWS backend
 
-Source of the Lambdas behind the fare notifier. Region `us-east-1`. Supabase is auth-only; all app data lives in DynamoDB. M1 has **no payment guard** (`subscription_status` arrives in M2).
+Source of the Lambdas behind the fare notifier. Region `us-east-1`. Supabase is auth-only; all app data lives in DynamoDB.
+M2 adds a **per-user** paid subscription (ECPay 信用卡定期定額, NT$300/month from `flight/ecpay.amount`): while a user's `accounts` row is paid, **every** route they watch gets alerts. Adding routes stays free.
 
 ```
 Product site (Vercel) ──POST/DELETE /subscribe, GET /subscriptions──▶ API Gateway (flight-api)
@@ -20,8 +21,19 @@ flight-fare-notification (SQS, BatchSize 1): lock + dedup vs notification_histor
 | `flight-parser`             | async from wrapper `{origin, destination, route}`                                                            | Window per subscriber: dated (departure clamped to today, expired skipped) or undated = any departure next month. One `prices_for_dates` call per (departure month, return month) pair, `MAX_PAIRS`=12. No round trip in a dated window → cheapest one-way out + later one-way back. Enqueues `{email, route, target_price, cheapest, cheapest_usd?, window?, kind?, legs?}`                                    |
 | `flight-fare-notification`  | SQS `flight-fare-queue`                                                                                      | env `NOTIFY_FLOOR_HOURS=24`, `REALERT_PCT=20`, `REALERT_ABS_TWD=2000`                                                                                                                                                                                                                                                                                                                                           |
 | `flight-seed`               | manual invoke                                                                                                | deploy bridge only (base64 → S3)                                                                                                                                                                                                                                                                                                                                                                                |
+| `flight-billing`            | `GET /account`, `POST /checkout`, `POST /cancel` (JWT); `POST /ecpay-return`, `POST /ecpay-period`, `ANY /ecpay-result` (ECPay, no auth) | M2. Checkout returns an auto-submit form to the ECPay cashier (`PeriodType=M`, `ExecTimes=999`, `CustomField1=email`). Callbacks verify CheckMacValue (empty fields kept), reply `1\|OK`, ignore `SimulatePaid=1`. Return → `active` + `current_period_end`; period → extend, 6 failures → `expired`; cancel → ECPay `CreditCardPeriodAction` + `cancelled` (served until `current_period_end`). Env `PERIOD_TYPE`/`FREQUENCY`/`EXEC_TIMES` (set `D`/`1`/`2` to test a renewal next day) |
+| `flight-status-notification`| SQS `flight-status-queue` (DLQ `flight-status-dlq`, 5 receives)                                             | M2. One consumer, `event_type` = `welcome` / `cancel` / `expired`; sent once per order (`<type>_sent_for` on the account row)                                                                                                                                                                                                                                                                                     |
 
-**Secrets** (Secrets Manager): `flight/travelpayouts` `{token, marker?}`, `flight/resend` `{api_key, from, test_to}`.
+**Secrets** (Secrets Manager): `flight/travelpayouts` `{token, marker?}`, `flight/resend` `{api_key, from, test_to}`, `flight/ecpay` `{merchant_id, hash_key, hash_iv, env: stage|prod, amount}`.
+
+## M2 paywall and auth switches
+
+| Switch | Where | Effect |
+|---|---|---|
+| `PAYWALL=on` (code default) / `off` | `flight-parser-wrapper`, `flight-parser`, `flight-fare-notification` | `on`: only users whose `accounts` row is `active`, or `cancelled` with `current_period_end` still ahead, get alerts. The wrapper also flips lapsed `cancelled` rows to `expired` and skips routes with no paying watcher |
+| `REQUIRE_JWT=true` | `flight-save-subscription`, `flight-list-subscriptions`, `flight-billing` | email comes only from the Supabase JWT (HTTP API authorizer `supabase-jwt`, issuer `https://yzqirjnhldwqjjakxeko.supabase.co/auth/v1`, audience `authenticated`). Before that, a client-supplied email is still accepted |
+
+`accounts` (PK `email`): `subscription_status` (`pending_payment` → `active` → `cancelled` → `expired`), `merchant_trade_no`, `current_period_end` (UTC `%Y-%m-%dT%H:%M:%SZ`, compared as a string), `current_period_end_date` (Taipei), `total_success_times`, `failed_times`, `return_origin`.
 **Shared role**: `flight-lambda-role`, inline policy `flight-data` — `put-role-policy` replaces the whole policy, so always read-merge-write.
 
 ## Dedup
@@ -42,6 +54,10 @@ python3 -m pytest aws/tests -q
 `GetObject` in the AWS MCP sandbox returns the zip body as a base64 string. Copy it out, then `base64 -d > x.zip && unzip x.zip` locally. That's how you check that this folder matches what's live.
 
 ## Redeploy a function
+
+**Method A (no bridge):** build an ASCII-only zip inside the AWS MCP script and pass it to `UpdateFunctionCode` `ZipFile` (see `.claude/skills/aws-best-practice` — every byte < 0x80 survives the MCP). Check the returned `CodeSha256` against the same zip built locally.
+
+**Bridge (older):**
 
 The AWS MCP sandbox can't build zips, and the shell can't reach S3, so code goes through `flight-seed`:
 
