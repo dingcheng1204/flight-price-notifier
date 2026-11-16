@@ -3,6 +3,7 @@ in wrapper / parser / fare-notification. moto only, no network.
 
     python3 -m pytest aws/tests -q
 """
+import io
 import json
 import pathlib
 import urllib.parse
@@ -64,7 +65,7 @@ def user_event(route, body=None, email="me@x.com", qs=None):
     ev = {"routeKey": route, "requestContext": {"domainName": API, "http": {"method": route.split()[0]}},
           "body": json.dumps(body or {})}
     if email:
-        ev["requestContext"]["authorizer"] = {"jwt": {"claims": {"email": email, "sub": "u1"}}}
+        ev["requestContext"]["authorizer"] = {"lambda": {"email": email, "sub": "u1"}}
     if qs:
         ev["queryStringParameters"] = qs
     return ev
@@ -366,3 +367,33 @@ def test_save_and_list_use_jwt_email(env, monkeypatch):
     ev = user_event("POST /subscribe", {"email": "victim@x.com", "origin": "TSA", "destination": "HND", "target_price": 1}, email=None)
     assert save.handler(ev, None)["statusCode"] == 401
     assert lst.handler(user_event("GET /subscriptions", qs={"email": "victim@x.com"}, email=None), None)["statusCode"] == 401
+
+
+# ---------------- authorizer ----------------
+def test_authorizer_asks_supabase(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://ref.supabase.co")
+    monkeypatch.setenv("SUPABASE_KEY", "sb_publishable_x")
+    a = load("flight-authorizer")
+    seen = {}
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *x):
+            return False
+
+    def ok(req, timeout=5):
+        seen.update(url=req.full_url, auth=req.get_header("Authorization"), key=req.get_header("Apikey"))
+        return Resp(json.dumps({"id": "u1", "aud": "authenticated", "email": "Me@X.com"}).encode())
+    monkeypatch.setattr(a.urllib.request, "urlopen", ok)
+    r = a.handler({"headers": {"authorization": "Bearer abc.def.ghi-long-token"}}, None)
+    assert r == {"isAuthorized": True, "context": {"email": "me@x.com", "sub": "u1"}}
+    assert seen == {"url": "https://ref.supabase.co/auth/v1/user", "auth": "Bearer abc.def.ghi-long-token",
+                    "key": "sb_publishable_x"}
+
+    def expired(req, timeout=5):
+        raise a.urllib.error.HTTPError(req.full_url, 401, "bad", {}, io.BytesIO(b"{}"))
+    monkeypatch.setattr(a.urllib.request, "urlopen", expired)
+    assert a.handler({"headers": {"authorization": "Bearer abc.def.ghi-long-token"}}, None) == {"isAuthorized": False}
+    assert a.handler({"headers": {}}, None) == {"isAuthorized": False}

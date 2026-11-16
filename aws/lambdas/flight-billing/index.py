@@ -4,9 +4,9 @@ One subscription per USER (DynamoDB `accounts`, PK email). While it is paid, eve
 user watches in `subscriptions` gets alerts; the routes themselves are free to add.
 
 Routes (HTTP API v2, routeKey):
-  GET  /account       [JWT] status + price
-  POST /checkout      [JWT] -> pending_payment + auto-submit HTML form to the ECPay cashier
-  POST /cancel        [JWT] -> ECPay CreditCardPeriodAction Action=Cancel, status cancelled (grace)
+  GET  /account       [auth] status + price
+  POST /checkout      [auth] -> pending_payment + auto-submit HTML form to the ECPay cashier
+  POST /cancel        [auth] -> ECPay CreditCardPeriodAction Action=Cancel, status cancelled (grace)
   POST /ecpay-return  ECPay S2S, first charge     -> active      (source of truth)
   POST /ecpay-period  ECPay S2S, 2nd charge on    -> extend / count failures / expired after 6
   ANY  /ecpay-result  ECPay browser POST (OrderResultURL) -> 302 back to the site (no state change)
@@ -155,10 +155,12 @@ def json_body(event):
 
 
 def auth_email(event, fallback=None):
-    """Email from the API Gateway JWT authorizer (Supabase access token).
+    """Email of the signed-in user, set by flight-authorizer from the Supabase access token.
     Until REQUIRE_JWT=true, fall back to a client-supplied email (transition period only)."""
-    claims = (((event.get("requestContext") or {}).get("authorizer") or {}).get("jwt") or {}).get("claims") or {}
-    email = str(claims.get("email") or "").strip().lower()
+    authz = (event.get("requestContext") or {}).get("authorizer") or {}
+    # flight-authorizer (Lambda) puts it in authorizer.lambda; a JWT authorizer would use jwt.claims
+    email = str((authz.get("lambda") or {}).get("email")
+                or ((authz.get("jwt") or {}).get("claims") or {}).get("email") or "").strip().lower()
     if not email and os.environ.get("REQUIRE_JWT", "false").lower() != "true":
         email = str(fallback or "").strip().lower()
     return email if EMAIL_RE.match(email) else None

@@ -12,10 +12,12 @@ def require_jwt():
 
 
 def auth_email(event, fallback=None):
-    """Email from the API Gateway JWT authorizer (Supabase access token). Until REQUIRE_JWT=true
+    """Email of the signed-in user, set by flight-authorizer from the Supabase access token. Until REQUIRE_JWT=true
     the client-supplied email is still accepted, so the old front end keeps working."""
-    claims = (((event.get("requestContext") or {}).get("authorizer") or {}).get("jwt") or {}).get("claims") or {}
-    email = str(claims.get("email") or "").strip().lower()
+    authz = (event.get("requestContext") or {}).get("authorizer") or {}
+    # flight-authorizer (Lambda) puts it in authorizer.lambda; a JWT authorizer would use jwt.claims
+    email = str((authz.get("lambda") or {}).get("email")
+                or ((authz.get("jwt") or {}).get("claims") or {}).get("email") or "").strip().lower()
     if not email and not require_jwt():
         email = str(fallback or "").strip().lower()
     return email if EMAIL_RE.match(email) else None
