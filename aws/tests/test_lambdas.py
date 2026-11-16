@@ -26,7 +26,9 @@ def load(name):
 
 
 @pytest.fixture
-def aws():
+def aws(monkeypatch):
+    # M1 behaviour (no paywall) unless a test turns it on; the M2 paywall is covered in test_billing.py
+    monkeypatch.setenv("PAYWALL", "off")
     with mock_aws():
         d = boto3.client("dynamodb")
         for t, pk, sk in [("subscriptions", "email", "route"), ("notification_history", "pk", "sent_at")]:

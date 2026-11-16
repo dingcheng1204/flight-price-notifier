@@ -2,7 +2,8 @@
 
 For every subscriber of the route, find the cheapest round trip inside *their* window and
 enqueue them if it is at or below their target (TWD gate; USD added when the same flight is
-also found in a USD query). M1: no payment-status filter.
+also found in a USD query). M2 (PAYWALL=on): only users whose `accounts` row is active, or
+cancelled but still inside the paid period, are considered.
 
 Window per subscriber:
   - dated:   departure in [depart_from, depart_to] and return in [return_from, return_to]
@@ -28,7 +29,9 @@ MAX_PAIRS = 12  # safety cap on month-pair queries per currency per run
 
 _sm = boto3.client("secretsmanager")
 _sqs = boto3.client("sqs")
-_table = boto3.resource("dynamodb").Table("subscriptions")
+_ddb = boto3.resource("dynamodb")
+_table = _ddb.Table("subscriptions")
+TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 _token = None
 _qurl = None
 
@@ -165,6 +168,27 @@ def subscribers(route):
         kw["ExclusiveStartKey"] = page["LastEvaluatedKey"]
 
 
+def paywall_on():
+    return os.environ.get("PAYWALL", "on").lower() == "on"
+
+
+def served_emails(emails):
+    """Subset of emails with a paid subscription (active, or cancelled inside the paid period)."""
+    name = os.environ.get("ACCOUNTS_TABLE", "accounts")
+    now = datetime.now(timezone.utc).strftime(TS_FMT)
+    out, emails = set(), sorted(set(emails))
+    for i in range(0, len(emails), 100):
+        req = {name: {"Keys": [{"email": e} for e in emails[i:i + 100]]}}
+        while req:
+            r = _ddb.batch_get_item(RequestItems=req)
+            for a in r.get("Responses", {}).get(name, []):
+                st, end = a.get("subscription_status"), a.get("current_period_end")
+                if st == "active" or (st == "cancelled" and end and end >= now):
+                    out.add(a["email"])
+            req = r.get("UnprocessedKeys") or None
+    return out
+
+
 def _fare(o, currency):
     return {"price": o["price"], "currency": currency, "airline": o.get("airline"),
             "depart_date": o.get("departure_at"), "return_date": o.get("return_at")}
@@ -175,8 +199,15 @@ def handler(event, context):
     route = event.get("route") or f"{origin}-{destination}"
     today = today_taipei()
 
+    rows = subscribers(route)
+    if paywall_on():
+        paying = served_emails(it["email"] for it in rows)
+        for it in rows:
+            if it["email"] not in paying:
+                print(f"{route} {it['email']} no paid subscription - skipping")
+        rows = [it for it in rows if it["email"] in paying]
     subs = []
-    for it in subscribers(route):
+    for it in rows:
         win = window_for(it, today)
         if win is None:
             print(f"{route} {it['email']} window expired - skipping")

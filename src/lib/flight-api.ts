@@ -1,6 +1,9 @@
 // Client for the AWS HTTP API (API Gateway → Lambda → DynamoDB).
 // Supabase is auth-only; all subscription data lives in DynamoDB.
 // The API URL is public (no secrets in the browser), so a fallback default is fine.
+// Every call sends the Supabase access token; the API takes the user's email from it.
+import { supabase } from "@/integrations/supabase/client";
+
 export const FLIGHT_API_URL: string = (
   import.meta.env["VITE_FLIGHT_API_URL"] ?? "https://vs9im442v3.execute-api.us-east-1.amazonaws.com"
 ).replace(/\/$/, "");
@@ -152,8 +155,19 @@ async function parse<T>(res: Response): Promise<T> {
   return body as T;
 }
 
+async function authHeaders(json = true): Promise<Record<string, string>> {
+  const { data } = await supabase.auth.getSession();
+  const h: Record<string, string> = json ? { "content-type": "application/json" } : {};
+  if (data.session?.access_token) h["authorization"] = `Bearer ${data.session.access_token}`;
+  return h;
+}
+
+// `email` is still sent while the API is in its transition period (REQUIRE_JWT=false);
+// once the JWT authorizer is on, the server ignores it and uses the token's email.
 export async function listSubscriptions(email: string): Promise<Subscription[]> {
-  const res = await fetch(`${FLIGHT_API_URL}/subscriptions?email=${encodeURIComponent(email)}`);
+  const res = await fetch(`${FLIGHT_API_URL}/subscriptions?email=${encodeURIComponent(email)}`, {
+    headers: await authHeaders(false),
+  });
   return (await parse<{ subscriptions: Subscription[] }>(res)).subscriptions;
 }
 
@@ -172,7 +186,7 @@ export async function saveSubscription(
   if (dates !== undefined) body["dates"] = dates;
   const res = await fetch(`${FLIGHT_API_URL}/subscribe`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: await authHeaders(),
     body: JSON.stringify(body),
   });
   return parse<{ ok: true; route: string; target_price: number }>(res);
@@ -181,8 +195,59 @@ export async function saveSubscription(
 export async function deleteSubscription(email: string, route: string) {
   const res = await fetch(`${FLIGHT_API_URL}/subscribe`, {
     method: "DELETE",
-    headers: { "content-type": "application/json" },
+    headers: await authHeaders(),
     body: JSON.stringify({ email, route }),
   });
   return parse<{ ok: true; deleted: string }>(res);
+}
+
+// ---------- paid subscription (one per user, ECPay 定期定額) ----------
+export type AccountStatus = "none" | "pending_payment" | "active" | "cancelled" | "expired";
+
+export interface Account {
+  email: string;
+  status: AccountStatus;
+  /** true while alerts go out: active, or cancelled but still inside the paid period */
+  served: boolean;
+  current_period_end: string | null;
+  /** Taipei date, YYYY-MM-DD */
+  current_period_end_date: string | null;
+  amount: number;
+  currency: "TWD";
+  env: "stage" | "prod";
+}
+
+export async function getAccount(): Promise<Account> {
+  const res = await fetch(`${FLIGHT_API_URL}/account`, { headers: await authHeaders(false) });
+  return parse<Account>(res);
+}
+
+/**
+ * Starts ECPay checkout. The API answers with an auto-submitting HTML form, so on success the
+ * browser leaves the app for the ECPay cashier; ECPay sends it back to /app?purchase=success|failed.
+ */
+export async function startCheckout(): Promise<void> {
+  const res = await fetch(`${FLIGHT_API_URL}/checkout`, {
+    method: "POST",
+    headers: await authHeaders(),
+    body: JSON.stringify({ return_origin: window.location.origin }),
+  });
+  if ((res.headers.get("content-type") ?? "").includes("text/html")) {
+    const html = await res.text();
+    document.open();
+    document.write(html);
+    document.close();
+    return;
+  }
+  await parse<unknown>(res); // JSON means an error (e.g. 409 already subscribed)
+  throw new Error(`HTTP ${res.status}`);
+}
+
+export async function cancelPlan(): Promise<Account> {
+  const res = await fetch(`${FLIGHT_API_URL}/cancel`, {
+    method: "POST",
+    headers: await authHeaders(),
+    body: "{}",
+  });
+  return parse<Account>(res);
 }
