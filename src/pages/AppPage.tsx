@@ -8,6 +8,8 @@ import { useAuthUser } from "@/components/RequireAuth";
 import { usePageMeta } from "@/lib/page-meta";
 import { DateRangeField } from "@/components/DateRangeField";
 import { Switch } from "@/components/ui/switch";
+import { PlanCard } from "@/components/PlanCard";
+import { useAccount } from "@/hooks/use-account";
 import {
   AIRPORTS,
   airportLabel,
@@ -40,6 +42,8 @@ export default function AppPage() {
   const displayName =
     (user.user_metadata?.["display_name"] as string | undefined) || email.split("@")[0] || "…";
 
+  const account = useAccount(email);
+  const served = account.data?.served ?? true; // don't flash "not notifying" while loading
   const subs = useQuery({
     queryKey: ["subscriptions", email],
     queryFn: () => listSubscriptions(email),
@@ -78,6 +82,8 @@ export default function AppPage() {
           </p>
         </div>
 
+        <PlanCard email={email} />
+
         <NewAlertForm email={email} existing={subs.data ?? []} />
 
         <section className="space-y-3">
@@ -94,12 +100,13 @@ export default function AppPage() {
             </p>
           )}
           {sorted.map((s) => (
-            <SubscriptionRow key={s.route} email={email} sub={s} />
+            <SubscriptionRow key={s.route} email={email} sub={s} served={served} />
           ))}
         </section>
 
         <p className="text-xs text-muted-foreground">
-          每 10 分鐘檢查一次你指定日期區間（未指定則為下個月）的最低來回票價（TWD）。同一航線 24
+          訂閱期間，每 10
+          分鐘檢查一次你指定日期區間（未指定則為下個月）的最低來回票價（TWD）。同一航線 24
           小時內最多通知一次，除非票價再降 20% 或 NT$2,000 以上。
         </p>
       </main>
@@ -298,7 +305,15 @@ function NewAlertForm({ email, existing }: { email: string; existing: Subscripti
   );
 }
 
-function SubscriptionRow({ email, sub }: { email: string; sub: Subscription }) {
+function SubscriptionRow({
+  email,
+  sub,
+  served,
+}: {
+  email: string;
+  sub: Subscription;
+  served: boolean;
+}) {
   const qc = useQueryClient();
   const [price, setPrice] = useState("");
 
@@ -342,9 +357,15 @@ function SubscriptionRow({ email, sub }: { email: string; sub: Subscription }) {
       <div className="space-y-1">
         <p className="flex flex-wrap items-center gap-2 font-medium">
           {airportLabel(sub.origin)} → {airportLabel(sub.destination)}
-          <span className="flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground">
-            <BadgeCheck className="h-3 w-3" /> 已訂閱
-          </span>
+          {served ? (
+            <span className="flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground">
+              <BadgeCheck className="h-3 w-3" /> 通知中
+            </span>
+          ) : (
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+              未訂閱，暫停通知
+            </span>
+          )}
         </p>
         <p className="text-sm text-muted-foreground">
           目標價 Target ≤ NT${sub.target_price.toLocaleString()}

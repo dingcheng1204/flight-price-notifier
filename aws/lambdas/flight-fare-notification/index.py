@@ -1,5 +1,7 @@
 """flight-fare-notification: SQS consumer. Dedup against notification_history,
-render a TWD-first email (optional ~USD line), send via Resend, record history only after 2xx."""
+render a TWD-first email (optional ~USD line), send via Resend, record history only after 2xx.
+M2 (PAYWALL=on): re-checks the user's `accounts` row right before sending, so a match queued
+just before a subscription lapsed is not emailed."""
 import json, os, html, urllib.request, urllib.error, urllib.parse
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
@@ -11,6 +13,8 @@ CITY = {"TSA": "台北松山", "TPE": "台北桃園", "HND": "東京羽田", "NR
         "HKG": "香港", "ICN": "首爾仁川", "TYO": "東京", "SEL": "首爾"}
 _sm = boto3.client("secretsmanager")
 _hist = boto3.resource("dynamodb").Table("notification_history")
+_accounts = boto3.resource("dynamodb").Table(os.environ.get("ACCOUNTS_TABLE", "accounts"))
+TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 _resend = None
 
 
@@ -217,8 +221,22 @@ def send_email(to, subj, html_body, text_body):
         raise Transient(f"resend network error: {e}")
 
 
+def paywall_on():
+    return os.environ.get("PAYWALL", "on").lower() == "on"
+
+
+def is_served(email):
+    a = _accounts.get_item(Key={"email": email}).get("Item") or {}
+    st, end = a.get("subscription_status"), a.get("current_period_end")
+    return st == "active" or (st == "cancelled" and bool(end)
+                              and end >= datetime.now(timezone.utc).strftime(TS_FMT))
+
+
 def process(msg):
     email, route = msg["email"], msg["route"]
+    if paywall_on() and not is_served(email):
+        print(f"skipped (no paid subscription) {email}#{route}")
+        return
     tw = msg["cheapest"]
     o, d = _split(route)
     fare = dict(tw, origin=o, destination=d)

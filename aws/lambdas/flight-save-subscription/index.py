@@ -8,7 +8,7 @@ dates (optional): {"depart_from","depart_to","return_from","return_to"} as YYYY-
   - object      -> validated and stored
 (Legacy: POST {email, plan_name: tokyo|seoul, target_price} still maps to TPE-TYO / TPE-SEL.)
 """
-import json, re
+import json, os, re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import boto3
@@ -28,6 +28,22 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 ROUTE_RE = re.compile(r"^[A-Z]{3}-[A-Z]{3}$")
 ddb = boto3.resource("dynamodb").Table("subscriptions")
 hist = boto3.resource("dynamodb").Table("notification_history")
+
+
+def require_jwt():
+    return os.environ.get("REQUIRE_JWT", "false").lower() == "true"
+
+
+def auth_email(event, fallback=None):
+    """Email of the signed-in user, set by flight-authorizer from the Supabase access token. Until REQUIRE_JWT=true
+    the client-supplied email is still accepted, so the old front end keeps working."""
+    authz = (event.get("requestContext") or {}).get("authorizer") or {}
+    # flight-authorizer (Lambda) puts it in authorizer.lambda; a JWT authorizer would use jwt.claims
+    email = str((authz.get("lambda") or {}).get("email")
+                or ((authz.get("jwt") or {}).get("claims") or {}).get("email") or "").strip().lower()
+    if not email and not require_jwt():
+        email = str(fallback or "").strip().lower()
+    return email if EMAIL_RE.match(email) else None
 
 
 def reset_dedup(email, route):
@@ -104,9 +120,9 @@ def handler(event, context):
     except (json.JSONDecodeError, ValueError):
         return resp(400, {"error": "invalid JSON"})
 
-    email = str(data.get("email", "")).strip().lower()
-    if not EMAIL_RE.match(email):
-        return resp(400, {"error": "invalid email"})
+    email = auth_email(event, data.get("email"))
+    if not email:
+        return resp(401 if require_jwt() else 400, {"error": "sign in required" if require_jwt() else "invalid email"})
 
     if _method(event) == "DELETE":
         route = str(data.get("route", "")).strip().upper()

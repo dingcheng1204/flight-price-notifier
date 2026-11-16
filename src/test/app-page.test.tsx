@@ -3,7 +3,14 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/integrations/supabase/client", () => ({ supabase: { auth: { signOut: vi.fn() } } }));
+vi.mock("@/integrations/supabase/client", () => ({
+  supabase: {
+    auth: {
+      signOut: vi.fn(),
+      getSession: vi.fn(async () => ({ data: { session: { access_token: "tok" } } })),
+    },
+  },
+}));
 vi.mock("@/components/RequireAuth", () => ({
   useAuthUser: () => ({
     id: "u1",
@@ -11,7 +18,7 @@ vi.mock("@/components/RequireAuth", () => ({
     user_metadata: { display_name: "Ding" },
   }),
 }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), message: vi.fn() } }));
 
 import AppPage from "@/pages/AppPage";
 import {
@@ -37,15 +44,22 @@ type Row = {
   return_to?: string | undefined;
 };
 let rows: Row[];
-const calls: { method: string; url: string; body?: unknown }[] = [];
+const calls: { method: string; url: string; body?: unknown; auth?: string | null }[] = [];
+let account: Record<string, unknown>;
 
 function fakeFetch(input: RequestInfo | URL, init?: RequestInit) {
   const url = String(input);
   const method = init?.method ?? "GET";
   const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-  calls.push({ method, url, body });
+  const auth = new Headers(init?.headers).get("authorization");
+  calls.push({ method, url, body, auth });
   const json = (status: number, data: unknown) =>
     Promise.resolve(new Response(JSON.stringify(data), { status }));
+  if (url.endsWith("/account")) return json(200, account);
+  if (url.endsWith("/cancel")) {
+    account = { ...account, status: "cancelled" };
+    return json(200, account);
+  }
   if (method === "GET") {
     const email = new URL(url).searchParams.get("email");
     return json(200, {
@@ -120,6 +134,16 @@ beforeEach(() => {
     },
   ];
   calls.length = 0;
+  account = {
+    email: "me@example.com",
+    status: "active",
+    served: true,
+    current_period_end: "2026-12-16T07:00:00Z",
+    current_period_end_date: "2026-12-16",
+    amount: 300,
+    currency: "TWD",
+    env: "stage",
+  };
   vi.stubGlobal("fetch", vi.fn(fakeFetch));
   vi.mocked(toast.success).mockClear();
   vi.mocked(toast.error).mockClear();
@@ -152,8 +176,9 @@ describe("AppPage", () => {
     renderPage();
     expect(await screen.findByText(/東京（所有機場）/)).toBeInTheDocument();
     expect(screen.getByText(/NT\$9,000/)).toBeInTheDocument();
-    expect(calls[0]).toMatchObject({ method: "GET" });
-    expect(calls[0]?.url).toContain("email=me%40example.com");
+    const list = calls.find((c) => c.url.includes("/subscriptions"));
+    expect(list).toMatchObject({ method: "GET", auth: "Bearer tok" });
+    expect(list?.url).toContain("email=me%40example.com");
   });
 
   it("adds TSA → HND, then HND → TSA (both directions), then updates and deletes", async () => {
@@ -236,6 +261,31 @@ describe("AppPage", () => {
     renderPage();
     expect(await screen.findByRole("button", { name: /更新目標價 Update/ })).toBeInTheDocument();
     expect(screen.getByText(/你已經在追蹤這條航線/)).toBeInTheDocument();
+  });
+});
+
+describe("AppPage plan", () => {
+  it("shows an active plan with its paid-through date and lets the user cancel", async () => {
+    renderPage();
+    expect(await screen.findByText("訂閱中")).toBeInTheDocument();
+    expect(screen.getByText(/本期有效至 2026-12-16/)).toBeInTheDocument();
+    expect(screen.getAllByText("通知中").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "取消訂閱" }));
+    fireEvent.click(await screen.findByRole("button", { name: "確定取消" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(calls.find((c) => c.url.endsWith("/cancel"))).toMatchObject({
+      method: "POST",
+      auth: "Bearer tok",
+    });
+  });
+
+  it("offers checkout and marks routes paused when not subscribed", async () => {
+    account = { ...account, status: "none", served: false, current_period_end_date: null };
+    renderPage();
+    expect(await screen.findByRole("button", { name: /訂閱 NT\$300 \/ 月/ })).toBeInTheDocument();
+    expect(await screen.findByText("未訂閱，暫停通知")).toBeInTheDocument();
+    expect(screen.getByText(/4311-9522-2222-2222/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "取消訂閱" })).not.toBeInTheDocument();
   });
 });
 
